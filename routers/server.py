@@ -1,6 +1,7 @@
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from models.serverlogs import ServerLog, get_db
+from models.serverlogs import ServerLog
+from database import get_db
 from pydantic import BaseModel
 from typing import List
 from fastapi import APIRouter

@@ -9,10 +9,3 @@ class ServerLog(Base):
     nombre_servidor = Column(String)
     status = Column(String)
     fecha = Column(DateTime, default=datetime.utcnow)
-    
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
