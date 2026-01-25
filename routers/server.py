@@ -17,6 +17,7 @@ class Server(BaseModel):
     
 class ServerList(BaseModel):
     servers: List[Server]
+
     
     
 @router.post("/")

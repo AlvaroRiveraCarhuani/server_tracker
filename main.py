@@ -4,8 +4,11 @@ from database import Base, engine
 import models
 
 app = FastAPI()
-Base.metadata.create_all(bind=engine)
 
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
+        
 @app.get("/")
 def hello():
     return {"message":"Hello "}
