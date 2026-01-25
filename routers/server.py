@@ -1,5 +1,6 @@
 from fastapi import Depends
 from sqlalchemy.orm import Session
+from datetime import datetime
 from models.serverlogs import ServerLog
 from database import get_db
 from pydantic import BaseModel
@@ -19,7 +20,22 @@ class ServerList(BaseModel):
     servers: List[Server]
 
     
+class ServerLogOut(BaseModel):
+    id: int
+    nombre_servidor: str
+    status: str
+    fecha: datetime
     
+    model_config={
+        "from_attributes": True
+    }
+    
+@router.get("/", response_model=List[ServerLogOut])
+def list_logs(limit: int = 10, db: Session = Depends(get_db)):
+    logs = db.query(ServerLog).order_by(ServerLog.fecha.desc()).limit(limit).all()
+    return logs
+
+
 @router.post("/")
 def check_servers(data: ServerList, db: Session = Depends(get_db)):
     servidores_caidos = []
