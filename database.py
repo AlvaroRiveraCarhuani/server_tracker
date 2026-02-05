@@ -1,20 +1,24 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, URL
 from sqlalchemy.orm import sessionmaker, declarative_base
+import os 
 
-SQLALCHEMY_DATABASE_URL = "postgresql://alvaro:alva123@db:5432/firs-project"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    future=True,
+url_object = URL.create(
+    "postgresql+pg8000",
+    username=os.getenv("POSTGRES_USER"),
+    password=os.getenv("POSTGRES_PASSWORD"),  
+    host=os.getenv("POSTGRES_HOST"),
+    database=os.getenv("POSTGRES_DB"),
 )
+
+engine = create_engine(url_object)
+
+Base = declarative_base()
 
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
 )
-
-Base = declarative_base()
 
 def get_db():
     db = SessionLocal()
