@@ -1,0 +1,62 @@
+name: CI Pipeline # Nombre del Robot
+
+# ¿Cuándo se activa?
+on:
+  push:
+    branches: [ "master", "main" ] # Cada vez que hagas push a master o main
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest # El robot usa una máquina Linux Ubuntu gratis
+
+    # AQUÍ ESTÁ LA MAGIA DE LA DB 🐳
+    # El robot crea un contenedor de Postgres temporal para las pruebas
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}       # Abre la caja fuerte
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }} # Abre la caja fuerte
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}           # Abre la caja fuerte
+        ports:
+          - 5432:5432
+        # Esperamos a que la base de datos esté lista antes de seguir
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    # 1. El robot descarga tu código
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2. Instala Python 3.11
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.11"
+
+    # 3. Instala las librerías
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install httpx # Necesario para pruebas si no está en requirements
+
+    # 4. Ejecuta el test (Aquí inyectamos las variables al Python)
+    - name: Run Tests (Prueba de Humo)
+      env:
+        # Aquí le pasamos las llaves al script de Python
+        POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        POSTGRES_HOST: localhost # En GitHub Actions, el servicio se ve como localhost
+      run: |
+        # Vamos a intentar iniciar la app solo para ver que no explota
+        # Usamos un truco: correr uvicorn en background y matarlo a los 5 segundos
+        timeout 10s uvicorn main:app --host 0.0.0.0 --port 8000 &
+        sleep 5
