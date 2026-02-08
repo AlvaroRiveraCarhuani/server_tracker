@@ -1,1 +1,2 @@
-from .serverlogs import ServerLog
+from .server_log import ServerLog
+from .target import Target

@@ -1,1 +1,2 @@
-from .server_schemas import Server, ServerList, ServerLogOut, ServerCheckResponse
+from .server_schema import ServerStatus, ServerList, ServerLogResponse
+from .target_schema import TargetCreate, TargetResponse
