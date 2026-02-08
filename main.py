@@ -1,15 +1,15 @@
 from fastapi import FastAPI
-from routers import server,target
 from database import Base, engine
+from routers import server, target
 import models
 
-app = FastAPI()
-
 Base.metadata.create_all(bind=engine)
-        
+
+app = FastAPI(title="Server Tracker API")
+
 app.include_router(server.router)
 app.include_router(target.router)
 
 @app.get("/")
-def hello():
-    return {"message":"Hello "}
+def root():
+    return {"message": "Server Tracker API is running"}
