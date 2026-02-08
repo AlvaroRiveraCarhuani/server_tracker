@@ -38,8 +38,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
   monitor:
-    build: .  
+    build: .
     container_name: server_tracker-monitor
     command: python monitor.py 
     env_file:
@@ -49,4 +50,7 @@ services:
     volumes:
       - .:/app
     depends_on:
-      - api 
+      - api
+
+volumes:
+  postgres_data:
