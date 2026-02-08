@@ -1,45 +1,32 @@
-from fastapi import Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from models.serverlogs import ServerLog
-from database import get_db
 from typing import List
-from schemas import ServerLogOut,ServerCheckResponse,ServerList
-from fastapi import APIRouter
 
-router=APIRouter(
-    prefix="/server",
-    tags=["Servers"]
-)
+from database import get_db
+from models.server_log import ServerLog
+from schemas.server_schema import ServerList, ServerLogResponse
 
+router = APIRouter(prefix="/servers", tags=["Server Logs"])
+
+@router.get("/history", response_model=List[ServerLogResponse])
+def get_history(limit: int = 10, db: Session = Depends(get_db)):
+    return db.query(ServerLog).order_by(ServerLog.timestamp.desc()).limit(limit).all()
+
+@router.post("/report")
+def report_status(data: ServerList, db: Session = Depends(get_db)):
+    failed_servers = []
     
-@router.get("/", response_model=List[ServerLogOut])
-def list_logs(limit: int = 10, db: Session = Depends(get_db)):
-    logs = db.query(ServerLog).order_by(ServerLog.fecha.desc()).limit(limit).all()
-    return logs
-
-
-@router.post("/", response_model=ServerCheckResponse)
-def check_servers(data: ServerList, db: Session = Depends(get_db)):
-    servidores_caidos = []
-    
-    for servidor in data.servers:
-        if servidor.status == "down":
-            nuevo_registro = ServerLog(
-                nombre_servidor=servidor.nombre,
-                status=servidor.status
+    for server in data.servers:
+        if server.status == "down":
+            new_log = ServerLog(
+                target_name=server.name,
+                status=server.status
             )
-                    
-            db.add(nuevo_registro)
-            
-            servidores_caidos.append(servidor)
+            db.add(new_log)
+            failed_servers.append(server)
 
-    if len(servidores_caidos) > 0:
-        db.commit() 
-        
-        return {
-            "alerta": True, 
-            "mensaje": f"Se guardaron {len(servidores_caidos)} servidores en la base de datos.",
-            "lista": servidores_caidos
-        }
-    else:
-        return {"alerta": False, "mensaje": "Todos los sistemas operativos"}
+    if failed_servers:
+        db.commit()
+        return {"message": f"Recorded {len(failed_servers)} failed servers."}
+    
+    return {"message": "All systems operational (or no failures reported)."}
