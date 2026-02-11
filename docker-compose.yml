@@ -51,6 +51,17 @@ services:
       - .:/app
     depends_on:
       - api
+  grafana:
+      image: grafana/grafana:latest
+      container_name: server_tracker-grafana
+      restart: unless-stopped
+      ports:
+        - "3000:3000" 
+      volumes:
+        - grafana_data:/var/lib/grafana 
+      depends_on:
+        - db
 
 volumes:
   postgres_data:
+  grafana_data: 
