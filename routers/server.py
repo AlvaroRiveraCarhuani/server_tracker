@@ -5,6 +5,7 @@ from typing import List
 from database import get_db
 from models.server_log import ServerLog
 from schemas.server_schema import ServerList, ServerLogResponse
+from auth.authApiKey import get_api_key
 
 router = APIRouter(prefix="/servers", tags=["Server Logs"])
 
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/servers", tags=["Server Logs"])
 def get_history(limit: int = 10, db: Session = Depends(get_db)):
     return db.query(ServerLog).order_by(ServerLog.timestamp.desc()).limit(limit).all()
 
-@router.post("/report")
+@router.post("/report", dependencies=[Depends(get_api_key)])
 def report_status(data: ServerList, db: Session = Depends(get_db)):
     failed_servers = []
     
