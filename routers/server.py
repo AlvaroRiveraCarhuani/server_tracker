@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -34,3 +34,16 @@ def report_status(data: ServerList, db: Session = Depends(get_db)):
     
     return {"message": "All systems operational. Log updated."}
     
+@router.delete("report", dependencies=[Depends(get_api_key)])
+def delete_report(id:int, db: Session = Depends(get_db)):
+    report = db.get(ServerLog, id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    try:
+        db.delete(report)
+        db.commit()
+        return {"message": f"Report {id} was successfully deleted"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting error: {str(e)}")
