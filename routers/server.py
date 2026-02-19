@@ -16,18 +16,21 @@ def get_history(limit: int = 10, db: Session = Depends(get_db)):
 @router.post("/report", dependencies=[Depends(get_api_key)])
 def report_status(data: ServerList, db: Session = Depends(get_db)):
     failed_servers = []
-    
+
     for server in data.servers:
+        new_log = ServerLog(
+            target_name=server.name,
+            status=server.status
+        )
+        db.add(new_log)
+        
         if server.status == "down":
-            new_log = ServerLog(
-                target_name=server.name,
-                status=server.status
-            )
-            db.add(new_log)
             failed_servers.append(server)
 
-    if failed_servers:
-        db.commit()
-        return {"message": f"Recorded {len(failed_servers)} failed servers."}
+    db.commit() 
     
-    return {"message": "All systems operational (or no failures reported)."}
+    if failed_servers:
+        return {"message": f"Recorded status. {len(failed_servers)} servers are DOWN."}
+    
+    return {"message": "All systems operational. Log updated."}
+    
