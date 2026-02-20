@@ -24,3 +24,15 @@ def create_target(target: TargetCreate, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="A target with this name already exists.")
+
+@router.delete("/", dependencies=[Depends(get_api_key)])
+def delete_target(id: int, db: Session = Depends(get_db)):
+    target = db.get(Target, id)
+    
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Target {target} not found")
+    try:
+        db.delete(target)
+        db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error to delete target, {e}")
