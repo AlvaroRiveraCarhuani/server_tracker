@@ -1,0 +1,29 @@
+    0 B ┌─ diagrama.dot
+ 4096 B ├─ Dockerfile
+ 4096 B │  ┌─ authApiKey.py
+ 4096 B ├─ auth
+ 4096 B ├─ database.py
+ 4096 B ├─ docker-compose.yml
+ 4096 B ├─ main.py
+ 4096 B ├─ monitor.py
+ 4096 B ├─ requirements.txt
+ 8192 B ├─ readme.md
+ 4096 B │  ┌─ server.py
+ 4096 B │  ├─ target.py
+ 8192 B ├─ routers
+ 4096 B │  ┌─ __init__.py
+ 4096 B │  ├─ server_log.py
+ 4096 B │  ├─ target.py
+12288 B ├─ models
+ 4096 B │  ┌─ __init__.py
+ 4096 B │  ├─ server_schema.py
+ 4096 B │  ├─ target_schema.py
+12288 B ├─ schemas
+ 4096 B │  ┌─ __init__.py
+ 4096 B │  ├─ base.py
+ 4096 B │  ├─ discord.py
+ 4096 B │  ├─ notifications.py
+16384 B ├─ notifications
+86016 B server_tracker
+
+5 directories, 21 files
