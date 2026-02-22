@@ -18,3 +18,6 @@ class ServerLogResponse(BaseModel):
     model_config = {
         "from_attributes": True
     }
+class ServerUpdate(BaseModel):
+    target_name: str | None = None
+    status: str | None = None
