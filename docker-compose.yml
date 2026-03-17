@@ -3,7 +3,7 @@ services:
     build: .
     container_name: server_tracker-api
     ports:
-      - "8000:8000"
+      - "80:8000"
     env_file:
       - .env
     volumes:
