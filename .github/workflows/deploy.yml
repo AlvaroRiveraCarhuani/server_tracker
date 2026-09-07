@@ -3,7 +3,7 @@ name: Despliegue a AWS Produccion
 on:
   push:
     branches:
-      - main 
+      - master 
 
 jobs:
   desplegar:
@@ -21,7 +21,7 @@ jobs:
           
           script: |
             cd ~/mi-proyecto 
-            git pull origin main
+            git pull origin master
             echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
             echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> .env

@@ -3,7 +3,7 @@ services:
     build: .
     container_name: server_tracker-api
     ports:
-      - "80:8000"
+      - "8000:8000"
     env_file:
       - .env
     volumes:
@@ -14,7 +14,7 @@ services:
         condition: service_healthy
 
   db:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: server_tracker-db
     restart: always
     env_file:
@@ -24,13 +24,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   adminer:
-    image: adminer
+    image: adminer:4.8.1
     container_name: server_tracker-adminer
     restart: always
     ports:
@@ -51,17 +51,16 @@ services:
       - .:/app
     depends_on:
       - api
+
   grafana:
-      image: grafana/grafana:latest
-      container_name: server_tracker-grafana
-      restart: unless-stopped
-      ports:
-        - "3000:3000" 
-      volumes:
-        - grafana_data:/var/lib/grafana 
-      depends_on:
-        - db
+    image: grafana/grafana:11.5.0
+    container_name: server_tracker-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000" 
+    volumes:
+      - grafana_data:/var/lib/grafana
 
 volumes:
   postgres_data:
-  grafana_data: 
+  grafana_data:
