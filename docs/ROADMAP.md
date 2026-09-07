@@ -56,15 +56,27 @@ Construir una plataforma de **Observabilidad Activa, ChatOps y AIOps** para infr
 
 ### Fase 4: Canal Reverso Saliente en Tiempo Real y Triaje AIOps [COMPLETADA]
 - [x] Conexión saliente persistente iniciada por el agente Go hacia FastAPI (WebSocket con HMAC-SHA256).
-- [x] Despacho inmediato de órdenes de Telegram (`restart`, `stop`, `isolate_network`) al agente correspondiente.
+- [x] Despacho inmediato de órdenes de control (`restart`, `stop`, `isolate_network`) al agente correspondiente.
 - [x] Registro de auditoría de acciones ejecutadas en el host (`audit_logs`).
 - [x] Triaje AIOps en tiempo real con OpenRouter para diagnóstico de incidentes en 2 líneas.
 
-### Fase 5: Integración y Validación MCP con Orquestadores de IA
-- [ ] Pruebas de integración con Claude Code, Cursor y OpenCode vía stdio/SSE.
-- [ ] Flujo de remediación asistida por IA para picos de egress y riesgos de OOMKilled.
+### Fase 5: Remediación en Caliente por Teclado en la TUI (Go Data Plane)
+- [ ] Atajos de remediación directa sobre el contenedor seleccionado: `r` (restart), `s` (stop), `x` (isolate network).
+- [ ] Modal interactivo de confirmación segura con Lip Gloss (`¿Confirmar acción en "container"? [y/N]`).
+- [ ] Ejecución en el motor Docker a través de `ports.CollectorPort.ExecuteRemediation`.
+- [ ] Notificación de estado en tiempo real en la barra de status (`[OK] Reiniciado en 850ms`).
 
-### Fase 6: Distribución, Script de Instalación y Release v1.0.0
+### Fase 6: Diagnóstico Pasivo Zero-Prompt con OpenRouter en la TUI
+- [ ] Detección desatendida de fallos y salidas anómalas (código != 0, OOMKilled 137, CrashLoopBackOff).
+- [ ] Extracción y envío en segundo plano de logs de crash hacia OpenRouter.
+- [ ] Banner contextual inferior en la TUI con diagnóstico en 1 línea y causa raíz sin necesidad de prompts manuales.
+
+### Fase 7: Sparklines y Tendencias de CPU/RAM en Tiempo Real
+- [ ] Historial circular en memoria de los últimos 30 deltas de CPU y Working Set RAM por contenedor.
+- [ ] Renderizado de sparklines con caracteres ASCII (` ▂▃▅▆█`) en la tabla principal y en vista de detalle.
+
+### Fase 8: Distribución, Script de Instalación y Release v1.0.0
 - [ ] Script de onboarding de un solo comando (`curl -sSL https://... | sh`).
 - [ ] Pipeline de CI para compilar binarios multi-arquitectura (`linux/amd64`, `linux/arm64`) en cada tag de versión.
 - [ ] Documentación técnica de despliegue en producción.
+
