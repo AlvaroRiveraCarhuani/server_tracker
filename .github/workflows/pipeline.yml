@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23.x"
+          go-version: "stable"
           cache-dependency-path: agent/go.sum
 
       - name: Verify Go module dependencies
@@ -31,7 +31,7 @@ jobs:
         run: go vet ./...
 
       - name: Run Go Unit Tests
-        run: go test -v -race -cover ./...
+        run: go test -v -race -cover ./internal/...
 
       - name: Build Agent Binary
         run: go build -v -o bin/solv-agent ./cmd/solv-agent
@@ -93,7 +93,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23.x"
+          go-version: "stable"
 
       - name: Build Linux amd64
         run: |
