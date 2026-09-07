@@ -1,0 +1,31 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Project: SOLV Server Tracker
+  Architecture: Hexagonal dual-plane (Go Host Agent Data Plane + Python FastAPI Control Plane)
+  Databases: PostgreSQL 16 / TimescaleDB
+  Security: Zero-Trust HMAC-SHA256, SecretService Keyring fallback chain, Telegram ChatOps with ephemeral signed tokens
+  Protocol: Outbound reverse WebSocket/gRPC channel (zero listening ports on host)
+
+strict_tdd: true
+
+rules:
+  proposal:
+    - Include user adoption & usability impact
+    - Document architectural risk mitigations
+    - Identify affected layers (Data Plane vs Control Plane)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include data contracts, sequence diagrams, and ADRs
+    - Document threat models and fallback strategies
+  tasks:
+    - Group tasks by component (Go Agent, FastAPI Backend, MCP, ChatOps)
+    - Follow strict TDD (Red-Green-Refactor)
+  apply:
+    - Follow conventions in .agents/AGENTS.md and .agents/skills/
+  verify:
+    - Run automated unit and integration tests
+    - Validate every spec scenario
