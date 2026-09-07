@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -527,22 +528,17 @@ func (m Model) viewTable() string {
 	}
 
 	// Ancho dinámico para las columnas
-	hasTrendCol := m.width >= 105
-	fixedColsWidth := 14 + 18 + 10 + 12 + 16 + 6 // ID + STATUS + CPU + RAM + EGRESS + márgenes
-	if hasTrendCol {
-		fixedColsWidth += 11 // TREND + espacio
+	hasCPUMeter := m.width >= 95
+	cpuColWidth := 10
+	if hasCPUMeter {
+		cpuColWidth = 14
 	}
-	nameColWidth := max(20, m.width-fixedColsWidth-8)
+	fixedColsWidth := 14 + 18 + cpuColWidth + 12 + 16 + 6 // ID + STATUS + CPU + RAM + EGRESS + márgenes
+	nameColWidth := max(22, m.width-fixedColsWidth-8)
 
 	// Encabezado de columnas
-	var headers string
-	if hasTrendCol {
-		headers = fmt.Sprintf("  %-14s %-*s %-18s %-10s %-10s %-12s %16s",
-			"ID", nameColWidth, "CONTAINER", "STATUS", "CPU %", "TREND", "RAM (MB)", "EGRESS")
-	} else {
-		headers = fmt.Sprintf("  %-14s %-*s %-18s %-10s %-12s %16s",
-			"ID", nameColWidth, "CONTAINER", "STATUS", "CPU %", "RAM (MB)", "EGRESS")
-	}
+	headers := fmt.Sprintf("  %-14s %-*s %-18s %-*s %-12s %16s",
+		"ID", nameColWidth, "CONTAINER", "STATUS", cpuColWidth, "CPU %", "RAM (MB)", "EGRESS")
 	b.WriteString(StyleHeader.Render(headers))
 	b.WriteString("\n")
 
@@ -564,7 +560,14 @@ func (m Model) viewTable() string {
 
 			colID := fmt.Sprintf("%-14s", c.ID)
 			colName := fmt.Sprintf("%-*s", nameColWidth, truncate(c.Name, nameColWidth-2))
-			colCPU := fmt.Sprintf("%-10.1f", c.CPUPercent)
+
+			var colCPU string
+			if hasCPUMeter {
+				colCPU = fmt.Sprintf("%-5.1f %s", c.CPUPercent, RenderGradientBar(c.CPUPercent, 100.0, 4))
+			} else {
+				colCPU = fmt.Sprintf("%-10.1f", c.CPUPercent)
+			}
+
 			colRAM := fmt.Sprintf("%-12.1f", ramMB)
 			colEgress := egressStyle.Render(fmt.Sprintf("%16s", egressStr))
 
@@ -573,21 +576,8 @@ func (m Model) viewTable() string {
 				prefix = "> "
 			}
 
-			var line string
-			if hasTrendCol {
-				colTrend := "· · · ·   "
-				if hist, ok := m.metricsHistory[c.ID]; ok && len(hist.CPU) > 0 {
-					spark := RenderSparkline(hist.CPU, 0, 100, 8)
-					if spark != "" {
-						colTrend = fmt.Sprintf("%-10s", spark)
-					}
-				}
-				line = fmt.Sprintf("%s%s %s %s %s %s %s %s",
-					prefix, colID, colName, statusStyled, colCPU, colTrend, colRAM, colEgress)
-			} else {
-				line = fmt.Sprintf("%s%s %s %s %s %s %s",
-					prefix, colID, colName, statusStyled, colCPU, colRAM, colEgress)
-			}
+			line := fmt.Sprintf("%s%s %s %s %-*s %s %s",
+				prefix, colID, colName, statusStyled, cpuColWidth, colCPU, colRAM, colEgress)
 
 			if i == m.cursor {
 				b.WriteString(StyleRowFocus.Render(line))
@@ -643,15 +633,57 @@ func (m Model) viewLogs() string {
 	breadcrumb := fmt.Sprintf("[<] Volver (Esc) | Logs: %s | Estado: %s", m.selectedName, statusBadge)
 	b.WriteString(StyleTitle.Render(breadcrumb) + "\n")
 
-	// Resumen temporal de tendencias si hay historial
-	if hist, ok := m.metricsHistory[m.selectedID]; ok && (len(hist.CPU) > 0 || len(hist.RAM) > 0) {
-		cpuSpark := RenderSparkline(hist.CPU, 0, 100, 20)
-		ramSpark := RenderSparkline(hist.RAM, 0, 0, 20)
-		trendHeader := fmt.Sprintf("  CPU: [%s]  |  RAM: [%s]", cpuSpark, ramSpark)
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(trendHeader) + "\n\n")
-	} else {
-		b.WriteString("\n")
+	// Buscar métrica actual del contenedor seleccionado
+	var selectedMetric *domain.ContainerMetric
+	for _, c := range m.metrics {
+		if c.ID == m.selectedID {
+			selectedMetric = &c
+			break
+		}
 	}
+
+	hist := m.metricsHistory[m.selectedID]
+	var trendLines []string
+
+	// 1. Línea de CPU con sparkline cuantitativa y aceleración
+	cpuVal := 0.0
+	if selectedMetric != nil {
+		cpuVal = selectedMetric.CPUPercent
+	}
+	if hist != nil && len(hist.CPU) > 0 {
+		spark := RenderSparkline(hist.CPU, 0, 100, 20)
+		trend := hist.CalculateCPUTrend()
+		minCPU, maxCPU := hist.CPUMinMax()
+		trendStyled := trend.Style.Render(fmt.Sprintf("%s %s", trend.Symbol, trend.Label))
+		trendLines = append(trendLines, fmt.Sprintf("  CPU: %5.1f%% [%s] %s  |  Mín: %.1f%%  Máx: %.1f%%", cpuVal, spark, trendStyled, minCPU, maxCPU))
+	} else {
+		trendLines = append(trendLines, fmt.Sprintf("  CPU: %5.1f%% %s", cpuVal, RenderGradientBar(cpuVal, 100.0, 14)))
+	}
+
+	// 2. Línea de RAM proporcional con gradiente térmico
+	ramBytes := uint64(0)
+	ramLimit := uint64(0)
+	if selectedMetric != nil {
+		ramBytes = selectedMetric.RAMBytes
+		ramLimit = selectedMetric.RAMLimitBytes
+	}
+	ramMB := float64(ramBytes) / (1024 * 1024)
+
+	if ramLimit > 0 {
+		limitMB := float64(ramLimit) / (1024 * 1024)
+		bar := RenderGradientBar(ramMB, limitMB, 14)
+		pct := (ramMB / limitMB) * 100.0
+		trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB / %6.1f MB %s %5.1f%%", ramMB, limitMB, bar, pct))
+	} else {
+		peakMB := ramMB
+		if hist != nil {
+			peakMB = math.Max(ramMB, hist.PeakRAM())
+		}
+		bar := RenderGradientBar(ramMB, peakMB, 14)
+		trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB %s (Pico: %.1f MB, Sin límite Docker)", ramMB, bar, peakMB))
+	}
+
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(strings.Join(trendLines, "\n")) + "\n\n")
 
 	b.WriteString(m.viewport.View() + "\n\n")
 	b.WriteString(StyleStatusBar.Render("[j/k, Up/Down, Scroll]: Scroll  |  [g/G]: Inicio/Fin  |  [Esc/h]: Volver a Flota"))

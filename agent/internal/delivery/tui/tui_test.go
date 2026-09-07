@@ -329,20 +329,20 @@ func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
 		t.Errorf("expected 2 samples for c-1, got %d", len(m.metricsHistory["c-1"].CPU))
 	}
 
-	// Renderizar tabla principal: debe contener encabezado TREND
+	// Renderizar tabla principal: debe contener encabezado de métricas
 	rendered := m.View()
-	if !strings.Contains(rendered, "TREND") {
-		t.Errorf("expected view to contain TREND column header for width >= 105, got:\n%s", rendered)
+	if !strings.Contains(rendered, "CPU %") || !strings.Contains(rendered, "RAM (MB)") {
+		t.Errorf("expected view to contain CPU %% and RAM (MB) column headers, got:\n%s", rendered)
 	}
 
-	// Renderizar vista de logs para c-1: debe contener la sección de tendencias
+	// Renderizar vista de logs para c-1: debe contener la sección de tendencias con métricas btop
 	m.activeState = stateLogViewer
 	m.selectedID = "c-1"
 	m.selectedName = "srv-1"
 	m.selectedState = "running"
 	renderedLogs := m.View()
-	if !strings.Contains(renderedLogs, "CPU: [") || !strings.Contains(renderedLogs, "RAM: [") {
-		t.Errorf("expected viewLogs to contain CPU and RAM sparkline trends, got:\n%s", renderedLogs)
+	if !strings.Contains(renderedLogs, "CPU:") || !strings.Contains(renderedLogs, "RAM:") {
+		t.Errorf("expected viewLogs to contain CPU and RAM btop-style trends, got:\n%s", renderedLogs)
 	}
 }
 

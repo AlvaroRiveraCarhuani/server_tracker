@@ -65,8 +65,65 @@ func TestRenderSparkline_MaxPoints(t *testing.T) {
 	samples := []float64{10, 20, 30, 40, 50, 60, 70}
 	// Limitar a los últimos 3 puntos
 	out := RenderSparkline(samples, 0, 100, 3)
-	// RenderSparkline devuelve una cadena con estilos Lipgloss; al menos debe renderizar sin pánico
 	if len(out) == 0 {
 		t.Errorf("expected output for maxPoints=3, got empty")
 	}
 }
+
+func TestRenderGradientBar(t *testing.T) {
+	// 0% debe tener corchetes y caracteres tenues
+	zeroBar := RenderGradientBar(0, 100, 10)
+	if !strings.HasPrefix(zeroBar, "[") || !strings.HasSuffix(zeroBar, "]") {
+		t.Fatalf("expected brackets in gradient bar, got %s", zeroBar)
+	}
+
+	// 50% debe contener bloques
+	midBar := RenderGradientBar(50, 100, 10)
+	if !strings.Contains(midBar, "█") {
+		t.Errorf("expected 50%% bar to contain filled blocks '█', got %s", midBar)
+	}
+
+	// 100% debe estar completamente lleno
+	fullBar := RenderGradientBar(100, 100, 10)
+	if strings.Contains(fullBar, "░") {
+		t.Errorf("expected 100%% bar to have no empty slots '░', got %s", fullBar)
+	}
+}
+
+func TestMetricHistory_TrendVectorAndPeak(t *testing.T) {
+	h := &MetricHistory{}
+
+	// Menos de 2 muestras -> estable
+	trend0 := h.CalculateCPUTrend()
+	if trend0.Symbol != "≈" {
+		t.Errorf("expected ≈ for empty history, got %s", trend0.Symbol)
+	}
+
+	// Añadir subida brusca: 10.0 -> 25.0 (+15.0%)
+	h.AddSample(10.0, 120.0)
+	h.AddSample(25.0, 150.0)
+
+	trendUp := h.CalculateCPUTrend()
+	if trendUp.Symbol != "▲" || trendUp.Delta != 15.0 {
+		t.Errorf("expected ▲ with delta 15.0, got %s delta %f", trendUp.Symbol, trendUp.Delta)
+	}
+
+	// Añadir bajada: 25.0 -> 12.0 (-13.0%)
+	h.AddSample(12.0, 200.0)
+	trendDown := h.CalculateCPUTrend()
+	if trendDown.Symbol != "▼" || trendDown.Delta != -13.0 {
+		t.Errorf("expected ▼ with delta -13.0, got %s delta %f", trendDown.Symbol, trendDown.Delta)
+	}
+
+	// Verificar Mín, Máx y Pico RAM
+	minCPU, maxCPU := h.CPUMinMax()
+	if minCPU != 10.0 || maxCPU != 25.0 {
+		t.Errorf("expected min 10.0 max 25.0, got min %f max %f", minCPU, maxCPU)
+	}
+
+	peakRAM := h.PeakRAM()
+	if peakRAM != 200.0 {
+		t.Errorf("expected peak RAM 200.0, got %f", peakRAM)
+	}
+}
+
