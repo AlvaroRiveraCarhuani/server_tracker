@@ -106,6 +106,10 @@ var (
 	StyleAIOpsTag = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorMauve)
+
+	StyleSparklineNormal  = lipgloss.NewStyle().Foreground(ColorGreen)
+	StyleSparklineWarning = lipgloss.NewStyle().Foreground(ColorPeach)
+	StyleSparklineDanger  = lipgloss.NewStyle().Foreground(ColorRed)
 )
 
 // FormatStatus renderiza los glifos ASCII con semántica cromática estricta y alto contraste

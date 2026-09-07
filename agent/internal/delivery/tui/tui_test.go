@@ -291,4 +291,60 @@ func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
 	}
 }
 
+func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
+	collector := &mockCollectorForTUI{}
+	model := NewModel(collector)
+	model.width = 120 // Ancho suficiente para columna TREND
+
+	// Batch 1: dos contenedores
+	batch1 := []domain.ContainerMetric{
+		{ID: "c-1", Name: "srv-1", Status: "running", CPUPercent: 10.0, RAMBytes: 100 * 1024 * 1024},
+		{ID: "c-2", Name: "srv-2", Status: "running", CPUPercent: 20.0, RAMBytes: 200 * 1024 * 1024},
+	}
+	newModel, _ := model.Update(batch1)
+	m := newModel.(Model)
+
+	if len(m.metricsHistory) != 2 {
+		t.Fatalf("expected 2 containers in metricsHistory, got %d", len(m.metricsHistory))
+	}
+	if len(m.metricsHistory["c-1"].CPU) != 1 || m.metricsHistory["c-1"].CPU[0] != 10.0 {
+		t.Errorf("expected c-1 CPU sample 10.0, got %v", m.metricsHistory["c-1"].CPU)
+	}
+
+	// Batch 2: c-1 sigue con 85% CPU, pero c-2 desaparece y aparece c-3
+	batch2 := []domain.ContainerMetric{
+		{ID: "c-1", Name: "srv-1", Status: "running", CPUPercent: 85.0, RAMBytes: 120 * 1024 * 1024},
+		{ID: "c-3", Name: "srv-3", Status: "running", CPUPercent: 5.0, RAMBytes: 50 * 1024 * 1024},
+	}
+	newModel, _ = m.Update(batch2)
+	m = newModel.(Model)
+
+	if len(m.metricsHistory) != 2 {
+		t.Fatalf("expected 2 containers after pruning c-2, got %d", len(m.metricsHistory))
+	}
+	if _, exists := m.metricsHistory["c-2"]; exists {
+		t.Errorf("expected c-2 to be pruned from metricsHistory")
+	}
+	if len(m.metricsHistory["c-1"].CPU) != 2 {
+		t.Errorf("expected 2 samples for c-1, got %d", len(m.metricsHistory["c-1"].CPU))
+	}
+
+	// Renderizar tabla principal: debe contener encabezado TREND
+	rendered := m.View()
+	if !strings.Contains(rendered, "TREND") {
+		t.Errorf("expected view to contain TREND column header for width >= 105, got:\n%s", rendered)
+	}
+
+	// Renderizar vista de logs para c-1: debe contener la sección de tendencias
+	m.activeState = stateLogViewer
+	m.selectedID = "c-1"
+	m.selectedName = "srv-1"
+	m.selectedState = "running"
+	renderedLogs := m.View()
+	if !strings.Contains(renderedLogs, "CPU: [") || !strings.Contains(renderedLogs, "RAM: [") {
+		t.Errorf("expected viewLogs to contain CPU and RAM sparkline trends, got:\n%s", renderedLogs)
+	}
+}
+
+
 

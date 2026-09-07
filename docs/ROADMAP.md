@@ -73,9 +73,11 @@ Construir una plataforma de **Observabilidad Activa, ChatOps y AIOps** para infr
 - [x] Sistema de caché en memoria (`diagnosisCache`) para evitar consultas duplicadas y saturación de cuota HTTP 429.
 
 
-### Fase 7: Sparklines y Tendencias de CPU/RAM en Tiempo Real
-- [ ] Historial circular en memoria de los últimos 30 deltas de CPU y Working Set RAM por contenedor.
-- [ ] Renderizado de sparklines con caracteres ASCII (` ▂▃▅▆█`) en la tabla principal y en vista de detalle.
+### Fase 7: Sparklines y Tendencias de CPU/RAM en Tiempo Real [COMPLETADA]
+- [x] Historial circular en memoria de los últimos 30 deltas de CPU y Working Set RAM por contenedor con poda automática.
+- [x] Renderizado dinámico de sparklines con caracteres Unicode (` ▂▃▅▆▇█`) en columna condicional `TREND` para terminales anchas (>= 105 cols).
+- [x] Panel de tendencias temporales extendidas de CPU y RAM en el encabezado de detalle/logs (`viewLogs()`).
+
 
 ### Fase 8: Distribución, Script de Instalación y Release v1.0.0
 - [ ] Script de onboarding de un solo comando (`curl -sSL https://... | sh`).

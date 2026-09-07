@@ -61,6 +61,7 @@ type Model struct {
 	triageClient     TriageService
 	diagnosisCache   map[string]string
 	triagePending    map[string]bool
+	metricsHistory   map[string]*MetricHistory
 	metrics          []domain.ContainerMetric
 	cursor           int
 	activeState      sessionState
@@ -96,6 +97,7 @@ func NewModel(collector ports.CollectorPort) Model {
 		triageClient:   ai.NewTriageClient(),
 		diagnosisCache: make(map[string]string),
 		triagePending:  make(map[string]bool),
+		metricsHistory: make(map[string]*MetricHistory),
 		cursor:         0,
 		activeState:    stateFleetTable,
 		filterInput:    ti,
@@ -414,6 +416,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metrics = msg
 		m.lastSync = time.Now()
 		m.lastError = ""
+
+		// Actualizar historial y podar contenedores eliminados
+		activeIDs := make(map[string]bool, len(msg))
+		for _, c := range msg {
+			activeIDs[c.ID] = true
+			hist, exists := m.metricsHistory[c.ID]
+			if !exists {
+				hist = &MetricHistory{}
+				m.metricsHistory[c.ID] = hist
+			}
+			ramMB := float64(c.RAMBytes) / (1024 * 1024)
+			hist.AddSample(c.CPUPercent, ramMB)
+		}
+		for id := range m.metricsHistory {
+			if !activeIDs[id] {
+				delete(m.metricsHistory, id)
+			}
+		}
+
 		filtered := m.filteredMetrics()
 		if m.cursor >= len(filtered) && len(filtered) > 0 {
 			m.cursor = len(filtered) - 1
@@ -505,13 +526,23 @@ func (m Model) viewTable() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorRed).Render(fmt.Sprintf("[ERROR] %s\n", m.lastError)))
 	}
 
-	// Ancho dinámico para la columna del nombre del contenedor
+	// Ancho dinámico para las columnas
+	hasTrendCol := m.width >= 105
 	fixedColsWidth := 14 + 18 + 10 + 12 + 16 + 6 // ID + STATUS + CPU + RAM + EGRESS + márgenes
-	nameColWidth := max(24, m.width-fixedColsWidth-8)
+	if hasTrendCol {
+		fixedColsWidth += 11 // TREND + espacio
+	}
+	nameColWidth := max(20, m.width-fixedColsWidth-8)
 
 	// Encabezado de columnas
-	headers := fmt.Sprintf("  %-14s %-*s %-18s %-10s %-12s %16s",
-		"ID", nameColWidth, "CONTAINER", "STATUS", "CPU %", "RAM (MB)", "EGRESS")
+	var headers string
+	if hasTrendCol {
+		headers = fmt.Sprintf("  %-14s %-*s %-18s %-10s %-10s %-12s %16s",
+			"ID", nameColWidth, "CONTAINER", "STATUS", "CPU %", "TREND", "RAM (MB)", "EGRESS")
+	} else {
+		headers = fmt.Sprintf("  %-14s %-*s %-18s %-10s %-12s %16s",
+			"ID", nameColWidth, "CONTAINER", "STATUS", "CPU %", "RAM (MB)", "EGRESS")
+	}
 	b.WriteString(StyleHeader.Render(headers))
 	b.WriteString("\n")
 
@@ -542,8 +573,21 @@ func (m Model) viewTable() string {
 				prefix = "> "
 			}
 
-			line := fmt.Sprintf("%s%s %s %s %s %s %s",
-				prefix, colID, colName, statusStyled, colCPU, colRAM, colEgress)
+			var line string
+			if hasTrendCol {
+				colTrend := "· · · ·   "
+				if hist, ok := m.metricsHistory[c.ID]; ok && len(hist.CPU) > 0 {
+					spark := RenderSparkline(hist.CPU, 0, 100, 8)
+					if spark != "" {
+						colTrend = fmt.Sprintf("%-10s", spark)
+					}
+				}
+				line = fmt.Sprintf("%s%s %s %s %s %s %s %s",
+					prefix, colID, colName, statusStyled, colCPU, colTrend, colRAM, colEgress)
+			} else {
+				line = fmt.Sprintf("%s%s %s %s %s %s %s",
+					prefix, colID, colName, statusStyled, colCPU, colRAM, colEgress)
+			}
 
 			if i == m.cursor {
 				b.WriteString(StyleRowFocus.Render(line))
@@ -597,7 +641,17 @@ func (m Model) viewLogs() string {
 	statusBadge := statusStyle.Render(fmt.Sprintf("%s %s", glyph, statusText))
 
 	breadcrumb := fmt.Sprintf("[<] Volver (Esc) | Logs: %s | Estado: %s", m.selectedName, statusBadge)
-	b.WriteString(StyleTitle.Render(breadcrumb) + "\n\n")
+	b.WriteString(StyleTitle.Render(breadcrumb) + "\n")
+
+	// Resumen temporal de tendencias si hay historial
+	if hist, ok := m.metricsHistory[m.selectedID]; ok && (len(hist.CPU) > 0 || len(hist.RAM) > 0) {
+		cpuSpark := RenderSparkline(hist.CPU, 0, 100, 20)
+		ramSpark := RenderSparkline(hist.RAM, 0, 0, 20)
+		trendHeader := fmt.Sprintf("  CPU: [%s]  |  RAM: [%s]", cpuSpark, ramSpark)
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(trendHeader) + "\n\n")
+	} else {
+		b.WriteString("\n")
+	}
 
 	b.WriteString(m.viewport.View() + "\n\n")
 	b.WriteString(StyleStatusBar.Render("[j/k, Up/Down, Scroll]: Scroll  |  [g/G]: Inicio/Fin  |  [Esc/h]: Volver a Flota"))
