@@ -6,7 +6,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free"
 
 class AITriageService:
     """
@@ -72,8 +72,12 @@ class AITriageService:
                 response = await client.post(OPENROUTER_API_URL, json=payload, headers=headers)
                 if response.status_code == 200:
                     data = response.json()
-                    diagnosis = data["choices"][0]["message"]["content"].strip()
-                    return diagnosis
+                    choices = data.get("choices", [])
+                    if choices:
+                        raw_content = choices[0].get("message", {}).get("content") or ""
+                        if raw_content.strip():
+                            return raw_content.strip()
+                    return "Diagnóstico no concluyente devuelto por el modelo LLM.\nRevisar logs manualmente."
                 else:
                     logger.warning(f"OpenRouter returned HTTP {response.status_code}: {response.text}")
                     return (
