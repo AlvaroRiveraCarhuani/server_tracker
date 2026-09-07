@@ -138,3 +138,6 @@ dmypy.json
 cython_debug/
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Python
+# Local SQLite databases
+*.db
+.pytest_cache/

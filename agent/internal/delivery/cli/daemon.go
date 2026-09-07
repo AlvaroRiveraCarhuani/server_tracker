@@ -32,7 +32,7 @@ func RunDaemon(
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	log.Printf("🚀 Iniciando SOLV Server Tracker Daemon [Host: %s, Intervalo: %v]", hostID, interval)
+	log.Printf("[DAEMON] Iniciando SOLV Server Tracker [Host: %s, Intervalo: %v]", hostID, interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -43,7 +43,7 @@ func RunDaemon(
 	for {
 		select {
 		case <-sigChan:
-			log.Println("🛑 Señal de parada recibida. Finalizando daemon...")
+			log.Println("[DAEMON] Senal de parada recibida. Finalizando daemon...")
 			return nil
 		case <-ticker.C:
 			collectAndSend(ctx, hostID, collector, ringBuffer, transport)
@@ -60,7 +60,7 @@ func collectAndSend(
 ) {
 	metrics, err := collector.Collect(ctx)
 	if err != nil {
-		log.Printf("⚠️ Error recolectando métricas Docker: %v", err)
+		log.Printf("[WARN] Error recolectando metricas Docker: %v", err)
 		return
 	}
 
@@ -83,11 +83,11 @@ func collectAndSend(
 		if err != nil {
 			// Si falla la red, volvemos a meter el lote al buffer
 			_ = ringBuffer.Push(batch)
-			log.Printf("⚠️ Error enviando telemetría al Control Plane (re-encolado en buffer): %v", err)
+			log.Printf("[WARN] Error enviando telemetria al Control Plane (re-encolado en buffer): %v", err)
 			break
 		}
 	}
 
-	fmt.Printf("[%s] Telemetría procesada: %d contenedores vigilados\n",
+	fmt.Printf("[%s] Telemetria procesada: %d contenedores vigilados\n",
 		time.Now().Format("15:04:05"), len(metrics))
 }

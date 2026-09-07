@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Catppuccin Mocha Color Palette
+// Paleta de Colores Catppuccin Mocha
 var (
 	colorBase     = lipgloss.Color("#1e1e2e")
 	colorSurface  = lipgloss.Color("#313244")
@@ -24,10 +24,9 @@ var (
 	colorGreen    = lipgloss.Color("#a6e3a1")
 	colorPeach    = lipgloss.Color("#fab387")
 	colorRed      = lipgloss.Color("#f38ba8")
-	colorTeal     = lipgloss.Color("#94e2d5")
 )
 
-// Estilos Lip Gloss
+// Estilos Tipográficos Lip Gloss
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -41,7 +40,7 @@ var (
 			Foreground(colorMauve).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderBottom(true).
-			BorderForeground(colorSurface)
+			BorderForeground(colorOverlay)
 
 	selectedRowStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -49,7 +48,7 @@ var (
 				Background(colorSurface)
 
 	runningStyle = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
-	stoppedStyle = lipgloss.NewStyle().Foreground(colorRed)
+	stoppedStyle = lipgloss.NewStyle().Foreground(colorSubtext)
 	pausedStyle  = lipgloss.NewStyle().Foreground(colorPeach)
 
 	statusBarStyle = lipgloss.NewStyle().
@@ -58,7 +57,7 @@ var (
 
 	cardStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorSurface).
+			BorderForeground(colorOverlay).
 			Padding(0, 1)
 )
 
@@ -70,7 +69,7 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-// Model representa el estado de la vista Bubbletea.
+// Model representa el estado reactivo de la TUI.
 type Model struct {
 	collector ports.CollectorPort
 	metrics   []domain.ContainerMetric
@@ -126,7 +125,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		// Límite estricto de 2 FPS para telemetría
 		return m, tea.Batch(m.fetchMetrics(), tickCmd())
 
 	case []domain.ContainerMetric:
@@ -151,69 +149,89 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	var b strings.Builder
 
-	// Header
-	b.WriteString(titleStyle.Render("🛰️  SOLV SERVER TRACKER  [TUI Deep Work]"))
+	// Header sin emojis
+	b.WriteString(titleStyle.Render("SOLV SERVER TRACKER :: DATA PLANE"))
 	b.WriteString("\n")
 
 	if m.lastError != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("⚠️ Error: %s\n", m.lastError)))
+		b.WriteString(lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("[ERROR] %s\n", m.lastError)))
 	}
 
-	// Tabla de Contenedores
-	headers := fmt.Sprintf("%-14s %-22s %-10s %-9s %-12s %-12s %-6s",
-		"ID", "CONTENEDOR", "ESTADO", "CPU %", "RAM (MB)", "EGRESS (KB/s)", "PIDS")
+	// Encabezado de columnas alineado
+	headers := fmt.Sprintf("  %-14s %-24s %-12s %-10s %-14s %-16s",
+		"ID", "CONTAINER", "STATUS", "CPU %", "RAM (MB)", "EGRESS (KB/s)")
 	b.WriteString(headerStyle.Render(headers))
 	b.WriteString("\n")
 
 	if len(m.metrics) == 0 {
-		b.WriteString(lipgloss.NewStyle().Foreground(colorSubtext).Render("  Buscando contenedores en /var/run/docker.sock...\n"))
+		b.WriteString(lipgloss.NewStyle().Foreground(colorSubtext).Render("  Scanning /var/run/docker.sock...\n"))
 	} else {
 		for i, c := range m.metrics {
-			statusStr := c.Status
+			var statusText string
+			var statusStyled string
+
 			switch c.Status {
 			case "running":
-				statusStr = runningStyle.Render("● running")
+				statusText = "RUNNING"
+				statusStyled = runningStyle.Render("RUNNING")
 			case "exited":
-				statusStr = stoppedStyle.Render("○ stopped")
+				statusText = "STOPPED"
+				statusStyled = stoppedStyle.Render("STOPPED")
 			case "paused":
-				statusStr = pausedStyle.Render("⏸ paused")
+				statusText = "PAUSED"
+				statusStyled = pausedStyle.Render("PAUSED")
+			default:
+				statusText = strings.ToUpper(c.Status)
+				statusStyled = stoppedStyle.Render(statusText)
 			}
 
 			ramMB := float64(c.RAMBytes) / (1024 * 1024)
 			egressKB := c.EgressBytesSec / 1024.0
 
-			row := fmt.Sprintf("%-14s %-22s %-19s %-8.1f%% %-12.1f %-12.2f %-6d",
-				c.ID,
-				truncate(c.Name, 20),
-				statusStr,
-				c.CPUPercent,
-				ramMB,
-				egressKB,
-				c.PIDs,
-			)
+			// Formateo de columnas con padding exacto
+			colID := fmt.Sprintf("%-14s", c.ID)
+			colName := fmt.Sprintf("%-24s", truncate(c.Name, 22))
+			colStatus := statusStyled + strings.Repeat(" ", max(0, 12-len(statusText)))
+			colCPU := fmt.Sprintf("%-10.1f", c.CPUPercent)
+			colRAM := fmt.Sprintf("%-14.1f", ramMB)
+			colEgress := fmt.Sprintf("%-16.2f", egressKB)
+
+			prefix := "  "
+			if i == m.cursor {
+				prefix = "> "
+			}
+
+			line := fmt.Sprintf("%s%s %s %s %s %s %s", prefix, colID, colName, colStatus, colCPU, colRAM, colEgress)
 
 			if i == m.cursor {
-				b.WriteString(selectedRowStyle.Render("▶ " + row))
+				b.WriteString(selectedRowStyle.Render(line))
 			} else {
-				b.WriteString("  " + row)
+				b.WriteString(line)
 			}
 			b.WriteString("\n")
 		}
 	}
 
-	// Footer / Atajos
-	shortcuts := "[j/k, ↑/↓]: Navegar  •  [r]: Refrescar  •  [q]: Salir  •  Última sincro: " + m.lastSync.Format("15:04:05")
+	// Barra inferior de navegación
+	shortcuts := fmt.Sprintf("[j/k, up/down]: Navigate  |  [r]: Refresh  |  [q]: Exit  |  Sync: %s", m.lastSync.Format("15:04:05"))
 	b.WriteString(statusBarStyle.Render(shortcuts))
 	b.WriteString("\n")
 
 	return cardStyle.Render(b.String())
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max-3] + "..."
+func truncate(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen-3] + "..."
 	}
 	return s
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // RunTUI inicia el programa interactivo Bubbletea.

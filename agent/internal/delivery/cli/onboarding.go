@@ -26,25 +26,25 @@ func RunOnboarding(vault ports.VaultPort) error {
 	var secretToken string
 
 	fmt.Println()
-	fmt.Println(brandStyle.Render("🔐  SOLV SERVER TRACKER — Onboarding Seguro"))
+	fmt.Println(brandStyle.Render("SOLV SERVER TRACKER :: Onboarding"))
 	fmt.Println()
 
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
-				Title("1. ¿Cuál es la URL de tu Servidor FastAPI (Control Plane)?").
-				Placeholder("ej. http://192.168.1.100:8000").
+				Title("1. URL del Servidor FastAPI (Control Plane)").
+				Placeholder("http://192.168.1.100:8000").
 				Value(&serverURL).
 				Validate(func(s string) error {
 					if len(s) == 0 {
-						return fmt.Errorf("la URL del servidor no puede estar vacía")
+						return fmt.Errorf("la URL del servidor no puede estar vacia")
 					}
 					return nil
 				}),
 
 			huh.NewInput().
-				Title("2. Ingresa tu Token Secreto (Pre-Shared Key para HMAC)").
-				Placeholder("El texto será ocultado por seguridad...").
+				Title("2. Token Secreto (Pre-Shared Key para HMAC)").
+				Placeholder("Entrada oculta...").
 				EchoMode(huh.EchoModePassword).
 				Value(&secretToken).
 				Validate(func(s string) error {
@@ -63,13 +63,13 @@ func RunOnboarding(vault ports.VaultPort) error {
 
 	err = vault.Save(serverURL, secretToken)
 	if err != nil {
-		return fmt.Errorf("error guardando credenciales en la bóveda: %w", err)
+		return fmt.Errorf("error guardando credenciales en la boveda: %w", err)
 	}
 
 	fmt.Println()
-	fmt.Println(successStyle.Render("✅ Configuración guardada y protegida criptográficamente."))
-	fmt.Printf("🔧 Servidor Destino: %s\n", serverURL)
-	fmt.Println("🔒 Las credenciales están blindadas sin archivos .env en texto plano.")
+	fmt.Println(successStyle.Render("[OK] Configuracion persistida y cifrada correctamente."))
+	fmt.Printf("Servidor destino: %s\n", serverURL)
+	fmt.Println("Credenciales protegidas sin archivos .env en texto plano.")
 
 	return nil
 }
@@ -81,7 +81,7 @@ func EnsureCredentials(vault ports.VaultPort) (serverURL, secretToken string, er
 		return serverURL, secretToken, nil
 	}
 
-	fmt.Println("⚠️ No se detectaron credenciales previas en el sistema. Iniciando asistente...")
+	fmt.Println("[INFO] No se detectaron credenciales en el sistema. Iniciando asistente...")
 	err = RunOnboarding(vault)
 	if err != nil {
 		return "", "", err

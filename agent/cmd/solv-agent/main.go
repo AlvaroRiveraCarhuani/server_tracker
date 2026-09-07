@@ -17,11 +17,10 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "", "Modo de ejecución: 'daemon', 'tui', 'onboarding', 'status'")
+	mode := flag.String("mode", "", "Modo de ejecucion: 'daemon', 'tui', 'onboarding', 'status'")
 	interval := flag.Duration("interval", 10*time.Second, "Intervalo de muestreo para el modo daemon")
 	flag.Parse()
 
-	// Ruta por defecto para la bóveda local en caso de fallback
 	homeDir, _ := os.UserHomeDir()
 	vaultPath := filepath.Join(homeDir, ".solv", "vault.enc")
 	passphrase := os.Getenv("SOLV_VAULT_PASSPHRASE")
@@ -33,7 +32,7 @@ func main() {
 
 	collector, err := docker.NewDockerCollector()
 	if err != nil {
-		log.Fatalf("❌ Error conectando con el socket de Docker (/var/run/docker.sock): %v\nVerifica que el servicio Docker esté corriendo y tu usuario pertenezca al grupo docker.", err)
+		log.Fatalf("[ERROR] Fallo al conectar con el socket de Docker (/var/run/docker.sock): %v\nVerifica que Docker este activo y tu usuario pertenezca al grupo docker.", err)
 	}
 
 	selectedMode := *mode
@@ -44,47 +43,46 @@ func main() {
 	switch selectedMode {
 	case "onboarding":
 		if err := cli.RunOnboarding(vaultService); err != nil {
-			log.Fatalf("❌ Error en onboarding: %v", err)
+			log.Fatalf("[ERROR] Fallo en onboarding: %v", err)
 		}
 
 	case "tui":
 		if err := tui.RunTUI(collector); err != nil {
-			log.Fatalf("❌ Error ejecutando TUI: %v", err)
+			log.Fatalf("[ERROR] Fallo ejecutando TUI: %v", err)
 		}
 
 	case "daemon":
 		serverURL, secretToken, err := cli.EnsureCredentials(vaultService)
 		if err != nil {
-			log.Fatalf("❌ No se pudieron cargar las credenciales: %v", err)
+			log.Fatalf("[ERROR] No se pudieron cargar las credenciales: %v", err)
 		}
 
 		ringBuffer := buffer.NewRingBuffer(1000)
 		httpTransport := transport.NewHTTPTransportClient(serverURL, secretToken)
 
 		if err := cli.RunDaemon(collector, vaultService, ringBuffer, httpTransport, *interval); err != nil {
-			log.Fatalf("❌ Error en daemon: %v", err)
+			log.Fatalf("[ERROR] Fallo en daemon: %v", err)
 		}
 
 	case "status":
 		serverURL, _, err := vaultService.Get()
 		if err != nil {
-			fmt.Println("❌ Estado: Sin credenciales configuradas.")
+			fmt.Println("[STATUS] Sin credenciales configuradas.")
 		} else {
-			fmt.Printf("✅ Estado: Configurado y conectado a %s\n", serverURL)
+			fmt.Printf("[STATUS] Configurado y conectado a %s\n", serverURL)
 		}
 
 	default:
-		// Si no se especifica modo, abrimos la TUI interactiva si hay TTY, o mostramos ayuda
-		fmt.Println("🛰️  SOLV Server Tracker — Agente Host")
+		fmt.Println("SOLV Server Tracker :: Host Agent")
 		fmt.Println("Uso: solv-agent [opciones]")
-		fmt.Println("  --mode=tui          Lanza la interfaz de terminal interactiva")
+		fmt.Println("  --mode=tui          Lanza la interfaz interactiva de terminal")
 		fmt.Println("  --mode=daemon       Lanza el recolector en segundo plano")
 		fmt.Println("  --mode=onboarding   Configura credenciales interactivas")
-		fmt.Println("  --mode=status       Verifica el estado de configuración")
+		fmt.Println("  --mode=status       Verifica el estado de configuracion")
 		fmt.Println()
-		fmt.Println("Iniciando TUI por defecto...")
+		fmt.Println("Iniciando TUI...")
 		if err := tui.RunTUI(collector); err != nil {
-			log.Fatalf("❌ Error ejecutando TUI: %v", err)
+			log.Fatalf("[ERROR] Fallo ejecutando TUI: %v", err)
 		}
 	}
 }
