@@ -58,6 +58,7 @@ type Model struct {
 	selectedState    string
 	pendingAction    domain.ActionType
 	pendingContainer domain.ContainerMetric
+	confirmModalBtn  int // 0 = Confirmar, 1 = Cancelar
 	statusMessage    string
 	statusExpiry     time.Time
 	lastError        string
@@ -166,8 +167,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		filtered := m.filteredMetrics()
-		// Control preciso de scroll con la rueda del mouse: 1 fila exacta por paso
 		switch msg.Type {
+		case tea.MouseLeft:
+			if m.activeState == stateFleetTable || m.activeState == stateFiltering {
+				headerOffset := 3
+				if m.lastError != "" {
+					headerOffset = 4
+				}
+				clickedRow := msg.Y - headerOffset
+				if clickedRow >= 0 && clickedRow < len(filtered) {
+					m.cursor = clickedRow
+				}
+			}
 		case tea.MouseWheelDown:
 			if m.activeState == stateFleetTable || m.activeState == stateFiltering {
 				if len(filtered) > 0 && m.cursor < len(filtered)-1 {
@@ -220,7 +231,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case stateConfirmRemediation:
 			switch msg.String() {
-			case "y", "Y", "enter":
+			case "left", "right", "tab", "shift+tab", "h", "l":
+				m.confirmModalBtn = 1 - m.confirmModalBtn
+			case "enter":
+				if m.confirmModalBtn == 0 {
+					cmd := m.executeRemediation(m.pendingContainer, m.pendingAction)
+					m.statusMessage = fmt.Sprintf("[..] Ejecutando %s en '%s'...", m.pendingAction, m.pendingContainer.Name)
+					m.statusExpiry = time.Now().Add(10 * time.Second)
+					m.activeState = stateFleetTable
+					return m, cmd
+				} else {
+					m.statusMessage = "[--] Acción cancelada por el usuario"
+					m.statusExpiry = time.Now().Add(3 * time.Second)
+					m.activeState = stateFleetTable
+				}
+			case "y", "Y":
 				cmd := m.executeRemediation(m.pendingContainer, m.pendingAction)
 				m.statusMessage = fmt.Sprintf("[..] Ejecutando %s en '%s'...", m.pendingAction, m.pendingContainer.Name)
 				m.statusExpiry = time.Now().Add(10 * time.Second)
@@ -263,18 +288,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.pendingContainer = filtered[m.cursor]
 					m.pendingAction = domain.ActionRestart
+					m.confirmModalBtn = 0
 					m.activeState = stateConfirmRemediation
 				}
 			case "s":
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.pendingContainer = filtered[m.cursor]
 					m.pendingAction = domain.ActionStop
+					m.confirmModalBtn = 0
 					m.activeState = stateConfirmRemediation
 				}
 			case "x":
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.pendingContainer = filtered[m.cursor]
 					m.pendingAction = domain.ActionIsolateNetwork
+					m.confirmModalBtn = 0
 					m.activeState = stateConfirmRemediation
 				}
 			case "?":
@@ -363,10 +391,16 @@ func (m Model) viewConfirmModal() string {
 		lipgloss.NewStyle().Foreground(ColorSubtext0).Render(m.pendingContainer.ID),
 	)
 
-	keys := fmt.Sprintf("%s Confirmar      %s Cancelar",
-		StyleModalKeyConfirm.Render("[ y / Enter ]"),
-		StyleModalKeyCancel.Render("[ n / Esc ]"),
-	)
+	var btnConfirm, btnCancel string
+	if m.confirmModalBtn == 0 {
+		btnConfirm = StyleBtnFocusedConfirm.Render("[ Confirmar (y / Enter) ]")
+		btnCancel = StyleBtnBlurred.Render("  Cancelar (n / Esc)  ")
+	} else {
+		btnConfirm = StyleBtnBlurred.Render("  Confirmar (y)  ")
+		btnCancel = StyleBtnFocusedCancel.Render("[ Cancelar (n / Esc / Enter) ]")
+	}
+
+	keys := fmt.Sprintf("%s      %s", btnConfirm, btnCancel)
 
 	body := fmt.Sprintf("%s\n\n%s\n\n%s", title, question, keys)
 	modalWidth := 56

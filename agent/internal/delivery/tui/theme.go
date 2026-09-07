@@ -79,13 +79,21 @@ var (
 			Bold(true).
 			Foreground(ColorPeach)
 
-	StyleModalKeyConfirm = lipgloss.NewStyle().
+	StyleBtnFocusedConfirm = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(ColorGreen)
+				Foreground(ColorBase).
+				Background(ColorGreen).
+				Padding(0, 1)
 
-	StyleModalKeyCancel = lipgloss.NewStyle().
+	StyleBtnFocusedCancel = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(ColorOverlay2)
+				Foreground(ColorBase).
+				Background(ColorPeach).
+				Padding(0, 1)
+
+	StyleBtnBlurred = lipgloss.NewStyle().
+			Foreground(ColorSubtext0).
+			Padding(0, 1)
 )
 
 // FormatStatus renderiza los glifos ASCII con semántica cromática estricta y alto contraste

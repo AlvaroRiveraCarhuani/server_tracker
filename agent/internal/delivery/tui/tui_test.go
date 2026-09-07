@@ -140,3 +140,55 @@ func TestTUI_ConfirmModalRender(t *testing.T) {
 		t.Errorf("expected rendered view to contain solv_api, got:\n%s", rendered)
 	}
 }
+
+func TestTUI_ModalArrowNavigation(t *testing.T) {
+	collector := &mockCollectorForTUI{metrics: sampleMetrics()}
+	model := NewModel(collector)
+	model.metrics = sampleMetrics()
+
+	// 1. Abrir modal con 'r'
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m := newModel.(Model)
+	if m.confirmModalBtn != 0 {
+		t.Fatalf("expected confirm button focused by default (0), got %d", m.confirmModalBtn)
+	}
+
+	// 2. Mover con flecha derecha -> debe seleccionar Cancelar (1)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = newModel.(Model)
+	if m.confirmModalBtn != 1 {
+		t.Fatalf("expected cancel button focused (1) after KeyRight, got %d", m.confirmModalBtn)
+	}
+
+	// 3. Presionar Enter sobre Cancelar -> debe cancelar sin ejecutar nada
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+	if m.activeState != stateFleetTable {
+		t.Fatalf("expected stateFleetTable after cancel, got %v", m.activeState)
+	}
+	if len(collector.executedCmds) != 0 {
+		t.Errorf("expected 0 executed commands, got %d", len(collector.executedCmds))
+	}
+}
+
+func TestTUI_MouseLeftRowSelection(t *testing.T) {
+	collector := &mockCollectorForTUI{metrics: sampleMetrics()}
+	model := NewModel(collector)
+	model.metrics = sampleMetrics()
+	model.cursor = 0
+
+	// Simular clic izquierdo en la fila 1 (segundo contenedor: solv_db)
+	// Y=3 es fila 0, Y=4 es fila 1
+	mouseClick := tea.MouseMsg{
+		X:    15,
+		Y:    4,
+		Type: tea.MouseLeft,
+	}
+
+	newModel, _ := model.Update(mouseClick)
+	m := newModel.(Model)
+	if m.cursor != 1 {
+		t.Errorf("expected cursor to move to 1 on mouse click, got %d", m.cursor)
+	}
+}
+
