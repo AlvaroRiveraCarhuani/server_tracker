@@ -54,10 +54,11 @@ Construir una plataforma de **Observabilidad Activa, ChatOps y AIOps** para infr
 - [x] Búsqueda y filtrado reactivo en tiempo real con tecla `/`.
 - [x] Blindaje ANSI con `lipgloss.Width()` y layouts colapsables en `View()`.
 
-### Fase 4: Canal Reverso Saliente en Tiempo Real (WebSocket/gRPC)
-- [ ] Conexión saliente persistente iniciada por el agente Go hacia FastAPI.
-- [ ] Despacho inmediato de órdenes de Telegram (`restart`, `stop`, `isolate_network`) al agente correspondiente.
-- [ ] Registro de auditoría de acciones ejecutadas en el host.
+### Fase 4: Canal Reverso Saliente en Tiempo Real y Triaje AIOps [COMPLETADA]
+- [x] Conexión saliente persistente iniciada por el agente Go hacia FastAPI (WebSocket con HMAC-SHA256).
+- [x] Despacho inmediato de órdenes de Telegram (`restart`, `stop`, `isolate_network`) al agente correspondiente.
+- [x] Registro de auditoría de acciones ejecutadas en el host (`audit_logs`).
+- [x] Triaje AIOps en tiempo real con OpenRouter para diagnóstico de incidentes en 2 líneas.
 
 ### Fase 5: Integración y Validación MCP con Orquestadores de IA
 - [ ] Pruebas de integración con Claude Code, Cursor y OpenCode vía stdio/SSE.
