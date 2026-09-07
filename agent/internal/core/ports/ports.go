@@ -9,6 +9,7 @@ import (
 // CollectorPort define la interfaz para recolectar métricas del socket de Docker.
 type CollectorPort interface {
 	Collect(ctx context.Context) ([]domain.ContainerMetric, error)
+	GetContainerLogs(ctx context.Context, containerID string, tail int) (string, error)
 	ExecuteRemediation(ctx context.Context, cmd domain.RemediationCommand) error
 }
 

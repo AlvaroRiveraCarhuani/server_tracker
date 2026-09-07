@@ -191,5 +191,46 @@ func (d *DockerCollector) ExecuteRemediation(ctx context.Context, cmd domain.Rem
 	}
 }
 
+// GetContainerLogs obtiene las ultimas lineas de registro de un contenedor.
+func (d *DockerCollector) GetContainerLogs(ctx context.Context, containerID string, tail int) (string, error) {
+	if tail <= 0 {
+		tail = 100
+	}
+	opts := dockertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       fmt.Sprintf("%d", tail),
+		Timestamps: true,
+	}
+	reader, err := d.cli.ContainerLogs(ctx, containerID, opts)
+	if err != nil {
+		return "", fmt.Errorf("error leyendo logs del contenedor %s: %w", containerID, err)
+	}
+	defer reader.Close()
+
+	var sb strings.Builder
+	buf := make([]byte, 8192)
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			// Los logs de docker contienen cabecera multiplexada de 8 bytes; limpiamos si es necesario
+			clean := stripDockerHeader(buf[:n])
+			sb.Write(clean)
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	return sb.String(), nil
+}
+
+func stripDockerHeader(b []byte) []byte {
+	if len(b) > 8 && (b[0] == 1 || b[0] == 2) && b[1] == 0 && b[2] == 0 && b[3] == 0 {
+		return b[8:]
+	}
+	return b
+}
+
 // Ensure interface satisfaction
 var _ ports.CollectorPort = (*DockerCollector)(nil)
