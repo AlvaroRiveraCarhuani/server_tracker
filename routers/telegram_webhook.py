@@ -1,8 +1,12 @@
 import os
-import json
+from datetime import datetime
 from typing import Set
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Depends, status
+from sqlalchemy.orm import Session
+from database import get_db
+from models.metrics import AuditLog
 from notifications.telegram import verify_and_parse_callback
+from services.connection_manager import manager
 
 router = APIRouter(prefix="/api/v1/chatops/telegram", tags=["ChatOps Telegram"])
 
@@ -11,7 +15,7 @@ def get_allowed_user_ids() -> Set[int]:
     return {int(uid.strip()) for uid in raw.split(",") if uid.strip().isdigit()}
 
 @router.post("/webhook")
-async def handle_telegram_webhook(request: Request):
+async def handle_telegram_webhook(request: Request, db: Session = Depends(get_db)):
     """Receptor seguro de webhooks de Telegram para interacción por botones."""
     try:
         body = await request.json()
@@ -40,11 +44,42 @@ async def handle_telegram_webhook(request: Request):
             "reason": reason,
         }
 
-    # Aquí se despacha la orden al canal de WebSocket reverso del host correspondiente
+    # Despachar orden al canal de WebSocket reverso del host correspondiente
+    exec_status = "failed"
+    exec_msg = ""
+
+    if not manager.is_connected(host_id):
+        exec_msg = f"Host '{host_id}' no tiene una conexión de control WebSocket activa."
+    else:
+        try:
+            res = await manager.send_command(host_id, action, container_id, timeout=10.0)
+            if res.get("success"):
+                exec_status = "success"
+                exec_msg = res.get("message", "Acción completada")
+            else:
+                exec_msg = res.get("message") or res.get("error", "Error desconocido en ejecución")
+        except Exception as e:
+            exec_msg = f"Error despachando comando: {str(e)}"
+
+    # Registrar en auditoría inmutable
+    audit = AuditLog(
+        host_id=host_id,
+        container_id=container_id,
+        action=action,
+        source="telegram",
+        status=exec_status,
+        message=exec_msg[:500] if exec_msg else None,
+        created_at=datetime.utcnow(),
+    )
+    db.add(audit)
+    db.commit()
+
     return {
-        "status": "accepted",
+        "status": "accepted" if exec_status == "success" else "execution_failed",
         "action": action,
         "host_id": host_id,
         "container_id": container_id,
-        "message": f"Orden de {action} autorizada y despachada hacia el host {host_id}",
+        "execution_status": exec_status,
+        "message": exec_msg,
     }
+

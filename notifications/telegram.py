@@ -68,8 +68,9 @@ async def send_interactive_telegram_alert(
     action: str = "restart",
     chat_id: Optional[str] = None,
     secret: Optional[str] = None,
+    ai_diagnosis: Optional[str] = None,
 ) -> bool:
-    """Envía un mensaje interactivo con botón firmado a Telegram."""
+    """Envía un mensaje interactivo con botón firmado a Telegram, opcionalmente con triaje de IA."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     target_chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
     shared_secret = secret or os.getenv("SOLV_TELEGRAM_SECRET", "default_telegram_secret_999")
@@ -78,12 +79,16 @@ async def send_interactive_telegram_alert(
         logger.warning("Credenciales de Telegram no configuradas")
         return False
 
+    full_message = message
+    if ai_diagnosis:
+        full_message += f"\n\n*Diagnóstico AIOps:*\n{ai_diagnosis}"
+
     callback_data = generate_signed_callback(action, host_id, container_id, shared_secret)
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
         "chat_id": target_chat_id,
-        "text": message,
+        "text": full_message,
         "parse_mode": "Markdown",
         "reply_markup": {
             "inline_keyboard": [

@@ -57,10 +57,16 @@ func main() {
 			log.Fatalf("[ERROR] No se pudieron cargar las credenciales: %v", err)
 		}
 
+		hostID, err := os.Hostname()
+		if err != nil {
+			hostID = "solv-host-unknown"
+		}
+
 		ringBuffer := buffer.NewRingBuffer(1000)
 		httpTransport := transport.NewHTTPTransportClient(serverURL, secretToken)
+		wsClient := transport.NewWSClient(serverURL, hostID, secretToken, collector)
 
-		if err := cli.RunDaemon(collector, vaultService, ringBuffer, httpTransport, *interval); err != nil {
+		if err := cli.RunDaemon(collector, vaultService, ringBuffer, httpTransport, wsClient, *interval); err != nil {
 			log.Fatalf("[ERROR] Fallo en daemon: %v", err)
 		}
 

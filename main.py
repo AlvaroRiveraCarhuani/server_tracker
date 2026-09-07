@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from database import Base, engine
-from routers import server, target, telemetry, telegram_webhook
+from routers import server, target, telemetry, telegram_webhook, websocket_channel
 import models.metrics
 
 Base.metadata.create_all(bind=engine)
@@ -12,6 +12,7 @@ app = FastAPI(
 )
 
 app.include_router(telemetry.router)
+app.include_router(websocket_channel.router)
 app.include_router(telegram_webhook.router)
 app.include_router(server.router)
 app.include_router(target.router)

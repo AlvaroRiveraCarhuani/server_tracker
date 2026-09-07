@@ -27,11 +27,10 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
-
 @pytest.fixture(autouse=True)
 def setup_database():
     Base.metadata.create_all(bind=test_engine)
+    app.dependency_overrides[get_db] = override_get_db
     db = TestingSessionLocal()
     # Crear un host preexistente
     host = Host(id="srv-node-01", name="Primary Node", secret_key="secret_key_prod_abc")
@@ -39,6 +38,7 @@ def setup_database():
     db.commit()
     db.close()
     yield
+    app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=test_engine)
 
 client = TestClient(app)

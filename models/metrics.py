@@ -36,3 +36,16 @@ class ContainerMetric(Base):
     __table_args__ = (
         Index("ix_host_container_time", "host_id", "container_id", "timestamp"),
     )
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host_id = Column(String(64), ForeignKey("hosts.id", ondelete="CASCADE"), nullable=False, index=True)
+    container_id = Column(String(64), nullable=False, index=True)
+    action = Column(String(32), nullable=False)
+    source = Column(String(32), nullable=False)  # 'telegram', 'mcp', 'automated'
+    status = Column(String(32), nullable=False)  # 'success', 'failed'
+    message = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+

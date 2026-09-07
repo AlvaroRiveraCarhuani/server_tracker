@@ -11,6 +11,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
+	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/transport"
 )
 
 // RunDaemon ejecuta el bucle de recolección en segundo plano con consumo mínimo de CPU.
@@ -19,6 +20,7 @@ func RunDaemon(
 	vault ports.VaultPort,
 	ringBuffer ports.BufferPort,
 	transport ports.TransportPort,
+	wsClient *transport.WSClient,
 	interval time.Duration,
 ) error {
 	hostID, err := os.Hostname()
@@ -33,6 +35,11 @@ func RunDaemon(
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	log.Printf("[DAEMON] Iniciando SOLV Server Tracker [Host: %s, Intervalo: %v]", hostID, interval)
+
+	// Iniciar canal de control reverso saliente WebSocket
+	if wsClient != nil {
+		go wsClient.Start(ctx)
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
