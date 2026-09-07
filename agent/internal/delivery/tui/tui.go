@@ -71,6 +71,8 @@ func NewModel(collector ports.CollectorPort) Model {
 		filterInput: ti,
 		viewport:    vp,
 		lastSync:    time.Now(),
+		width:       100,
+		height:      24,
 	}
 }
 
@@ -126,8 +128,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.viewport.Width = msg.Width - 4
-		m.viewport.Height = max(5, msg.Height-6)
+		m.viewport.Width = max(20, msg.Width-6)
+		m.viewport.Height = max(5, msg.Height-8)
+
+	case tea.MouseMsg:
+		filtered := m.filteredMetrics()
+		// Control preciso de scroll con la rueda del mouse: 1 fila exacta por paso
+		switch msg.Type {
+		case tea.MouseWheelDown:
+			if m.activeState == stateFleetTable || m.activeState == stateFiltering {
+				if len(filtered) > 0 && m.cursor < len(filtered)-1 {
+					m.cursor++
+				}
+			} else if m.activeState == stateLogViewer {
+				m.viewport.LineDown(1)
+			}
+		case tea.MouseWheelUp:
+			if m.activeState == stateFleetTable || m.activeState == stateFiltering {
+				if len(filtered) > 0 && m.cursor > 0 {
+					m.cursor--
+				}
+			} else if m.activeState == stateLogViewer {
+				m.viewport.LineUp(1)
+			}
+		}
 
 	case tea.KeyMsg:
 		switch m.activeState {
@@ -228,20 +252,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	content := ""
 	switch m.activeState {
 	case stateLogViewer:
-		return m.viewLogs()
+		content = m.viewLogs()
 	case stateHelp:
-		return m.viewHelp()
+		content = m.viewHelp()
 	default:
-		return m.viewTable()
+		content = m.viewTable()
 	}
+
+	// Expandir el contenedor a todo el ancho y alto disponible de la terminal
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorSurface1).
+		Padding(0, 1).
+		Width(max(60, m.width-4)).
+		Height(max(10, m.height-2))
+
+	return cardStyle.Render(content)
 }
 
 func (m Model) viewTable() string {
 	var b strings.Builder
 
-	// Header
+	// Header superior
 	b.WriteString(StyleTitle.Render("SOLV SERVER TRACKER :: DATA PLANE"))
 	b.WriteString("\n")
 
@@ -249,9 +284,13 @@ func (m Model) viewTable() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorRed).Render(fmt.Sprintf("[ERROR] %s\n", m.lastError)))
 	}
 
-	// Encabezado de columnas alineado y con Egress alineado a la derecha
-	headers := fmt.Sprintf("  %-12s %-24s %-16s %-10s %-12s %14s",
-		"ID", "CONTAINER", "STATUS", "CPU %", "RAM (MB)", "EGRESS")
+	// Ancho dinámico para la columna del nombre del contenedor
+	fixedColsWidth := 14 + 18 + 10 + 12 + 16 + 6 // ID + STATUS + CPU + RAM + EGRESS + márgenes
+	nameColWidth := max(24, m.width-fixedColsWidth-8)
+
+	// Encabezado de columnas
+	headers := fmt.Sprintf("  %-14s %-*s %-18s %-10s %-12s %16s",
+		"ID", nameColWidth, "CONTAINER", "STATUS", "CPU %", "RAM (MB)", "EGRESS")
 	b.WriteString(StyleHeader.Render(headers))
 	b.WriteString("\n")
 
@@ -271,18 +310,17 @@ func (m Model) viewTable() string {
 			ramMB := float64(c.RAMBytes) / (1024 * 1024)
 			egressStr, egressStyle := FormatEgress(c.EgressBytesSec)
 
-			colID := fmt.Sprintf("%-12s", c.ID)
-			colName := fmt.Sprintf("%-24s", truncate(c.Name, 22))
+			colID := fmt.Sprintf("%-14s", c.ID)
+			colName := fmt.Sprintf("%-*s", nameColWidth, truncate(c.Name, nameColWidth-2))
 			colCPU := fmt.Sprintf("%-10.1f", c.CPUPercent)
 			colRAM := fmt.Sprintf("%-12.1f", ramMB)
-			colEgress := egressStyle.Render(fmt.Sprintf("%14s", egressStr))
+			colEgress := egressStyle.Render(fmt.Sprintf("%16s", egressStr))
 
 			prefix := "  "
 			if i == m.cursor {
 				prefix = "> "
 			}
 
-			// Renderizado con conocimiento exacto de anchos ANSI
 			line := fmt.Sprintf("%s%s %s %s %s %s %s",
 				prefix, colID, colName, statusStyled, colCPU, colRAM, colEgress)
 
@@ -303,18 +341,17 @@ func (m Model) viewTable() string {
 		if m.filterValue != "" {
 			filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
 		}
-		shortcuts := fmt.Sprintf("[j/k]: Navegar  |  [/]: Filtrar  |  [l/Enter]: Logs  |  [r]: Refrescar  |  [?]: Ayuda  |  Sync: %s%s",
+		shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [/]: Filtrar  |  [l/Enter]: Logs  |  [r]: Refrescar  |  [?]: Ayuda  |  Sync: %s%s",
 			m.lastSync.Format("15:04:05"), filterTag)
 		b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 	}
 
-	return StyleCard.Render(b.String())
+	return b.String()
 }
 
 func (m Model) viewLogs() string {
 	var b strings.Builder
 
-	// Breadcrumb Header
 	glyph, statusText, statusStyle := FormatStatus(m.selectedState, 0, 0)
 	statusBadge := statusStyle.Render(fmt.Sprintf("%s %s", glyph, statusText))
 
@@ -322,26 +359,26 @@ func (m Model) viewLogs() string {
 	b.WriteString(StyleTitle.Render(breadcrumb) + "\n\n")
 
 	b.WriteString(m.viewport.View() + "\n\n")
-	b.WriteString(StyleStatusBar.Render("[j/k, Up/Down]: Scroll  |  [g/G]: Inicio/Fin  |  [Esc/h]: Volver a Flota"))
+	b.WriteString(StyleStatusBar.Render("[j/k, Up/Down, Scroll]: Scroll  |  [g/G]: Inicio/Fin  |  [Esc/h]: Volver a Flota"))
 
-	return StyleCard.Render(b.String())
+	return b.String()
 }
 
 func (m Model) viewHelp() string {
 	var b strings.Builder
 
 	b.WriteString(StyleTitle.Render("SOLV SERVER TRACKER :: ATAJOS DE TECLADO") + "\n\n")
-	b.WriteString("  j / Down       : Mover cursor hacia abajo\n")
-	b.WriteString("  k / Up         : Mover cursor hacia arriba\n")
-	b.WriteString("  /              : Abrir filtro interactivo en tiempo real\n")
-	b.WriteString("  l / Enter      : Abrir visor de logs en vivo a pantalla completa\n")
-	b.WriteString("  r              : Forzar recoleccion inmediata de metricas\n")
-	b.WriteString("  Esc / h        : Cerrar visor de logs / cancelar filtro\n")
-	b.WriteString("  ?              : Mostrar / ocultar esta ayuda\n")
-	b.WriteString("  q / Ctrl+C     : Salir de la aplicacion\n\n")
+	b.WriteString("  j / Down / ScrollDown : Mover cursor hacia abajo (1 en 1)\n")
+	b.WriteString("  k / Up / ScrollUp     : Mover cursor hacia arriba (1 en 1)\n")
+	b.WriteString("  /                     : Abrir filtro interactivo en tiempo real\n")
+	b.WriteString("  l / Enter             : Abrir visor de logs en vivo a pantalla completa\n")
+	b.WriteString("  r                     : Forzar recoleccion inmediata de metricas\n")
+	b.WriteString("  Esc / h               : Cerrar visor de logs / cancelar filtro\n")
+	b.WriteString("  ?                     : Mostrar / ocultar esta ayuda\n")
+	b.WriteString("  q / Ctrl+C            : Salir de la aplicacion\n\n")
 	b.WriteString(StyleStatusBar.Render("Presiona Esc para volver a la tabla de contenedores."))
 
-	return StyleCard.Render(b.String())
+	return b.String()
 }
 
 func truncate(s string, maxLen int) string {
@@ -358,9 +395,13 @@ func max(a, b int) int {
 	return b
 }
 
-// RunTUI inicia el programa interactivo Bubbletea.
+// RunTUI inicia el programa interactivo Bubbletea con soporte de mouse.
 func RunTUI(collector ports.CollectorPort) error {
-	p := tea.NewProgram(NewModel(collector), tea.WithAltScreen())
+	p := tea.NewProgram(
+		NewModel(collector),
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 	_, err := p.Run()
 	return err
 }
