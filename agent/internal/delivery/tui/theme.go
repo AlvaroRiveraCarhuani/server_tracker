@@ -68,6 +68,24 @@ var (
 	StyleFilterPrompt = lipgloss.NewStyle().
 				Foreground(ColorMauve).
 				Bold(true)
+
+	StyleModal = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(ColorPeach).
+			Padding(1, 2).
+			Background(ColorSurface0)
+
+	StyleModalTitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorPeach)
+
+	StyleModalKeyConfirm = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(ColorGreen)
+
+	StyleModalKeyCancel = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(ColorOverlay2)
 )
 
 // FormatStatus renderiza los glifos ASCII con semántica cromática estricta y alto contraste

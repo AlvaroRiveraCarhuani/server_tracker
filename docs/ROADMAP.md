@@ -60,11 +60,11 @@ Construir una plataforma de **Observabilidad Activa, ChatOps y AIOps** para infr
 - [x] Registro de auditoría de acciones ejecutadas en el host (`audit_logs`).
 - [x] Triaje AIOps en tiempo real con OpenRouter para diagnóstico de incidentes en 2 líneas.
 
-### Fase 5: Remediación en Caliente por Teclado en la TUI (Go Data Plane)
-- [ ] Atajos de remediación directa sobre el contenedor seleccionado: `r` (restart), `s` (stop), `x` (isolate network).
-- [ ] Modal interactivo de confirmación segura con Lip Gloss (`¿Confirmar acción en "container"? [y/N]`).
-- [ ] Ejecución en el motor Docker a través de `ports.CollectorPort.ExecuteRemediation`.
-- [ ] Notificación de estado en tiempo real en la barra de status (`[OK] Reiniciado en 850ms`).
+### Fase 5: Remediación en Caliente por Teclado en la TUI (Go Data Plane) [COMPLETADA]
+- [x] Atajos de remediación directa sobre el contenedor seleccionado: `r` (restart), `s` (stop), `x` (isolate network).
+- [x] Modal interactivo de confirmación segura con Lip Gloss (`¿Confirmar acción en "container"? [y/N]`).
+- [x] Ejecución en el motor Docker a través de `ports.CollectorPort.ExecuteRemediation`.
+- [x] Notificación de estado en tiempo real en la barra de status (`[OK] Reiniciado en 850ms`).
 
 ### Fase 6: Diagnóstico Pasivo Zero-Prompt con OpenRouter en la TUI
 - [ ] Detección desatendida de fallos y salidas anómalas (código != 0, OOMKilled 137, CrashLoopBackOff).

@@ -20,6 +20,7 @@ const (
 	stateFleetTable sessionState = iota
 	stateLogViewer
 	stateFiltering
+	stateConfirmRemediation
 	stateHelp
 )
 
@@ -27,6 +28,13 @@ type tickMsg time.Time
 type logsMsg struct {
 	containerName string
 	content       string
+	err           error
+}
+
+type remediationResultMsg struct {
+	action        domain.ActionType
+	containerName string
+	elapsed       time.Duration
 	err           error
 }
 
@@ -38,20 +46,24 @@ func tickCmd() tea.Cmd {
 
 // Model representa el estado global de la TUI interactiva.
 type Model struct {
-	collector     ports.CollectorPort
-	metrics       []domain.ContainerMetric
-	cursor        int
-	activeState   sessionState
-	filterInput   textinput.Model
-	filterValue   string
-	viewport      viewport.Model
-	selectedName  string
-	selectedID    string
-	selectedState string
-	lastError     string
-	lastSync      time.Time
-	width         int
-	height        int
+	collector        ports.CollectorPort
+	metrics          []domain.ContainerMetric
+	cursor           int
+	activeState      sessionState
+	filterInput      textinput.Model
+	filterValue      string
+	viewport         viewport.Model
+	selectedName     string
+	selectedID       string
+	selectedState    string
+	pendingAction    domain.ActionType
+	pendingContainer domain.ContainerMetric
+	statusMessage    string
+	statusExpiry     time.Time
+	lastError        string
+	lastSync         time.Time
+	width            int
+	height           int
 }
 
 // NewModel inicializa el modelo de la TUI.
@@ -121,6 +133,27 @@ func (m Model) filteredMetrics() []domain.ContainerMetric {
 	return filtered
 }
 
+func (m Model) executeRemediation(c domain.ContainerMetric, action domain.ActionType) tea.Cmd {
+	return func() tea.Msg {
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		cmd := domain.RemediationCommand{
+			ContainerID: c.ID,
+			Action:      action,
+			Timestamp:   time.Now().Unix(),
+		}
+		err := m.collector.ExecuteRemediation(ctx, cmd)
+		return remediationResultMsg{
+			action:        action,
+			containerName: c.Name,
+			elapsed:       time.Since(start),
+			err:           err,
+		}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -185,6 +218,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeState = stateFleetTable
 			}
 
+		case stateConfirmRemediation:
+			switch msg.String() {
+			case "y", "Y", "enter":
+				cmd := m.executeRemediation(m.pendingContainer, m.pendingAction)
+				m.statusMessage = fmt.Sprintf("[..] Ejecutando %s en '%s'...", m.pendingAction, m.pendingContainer.Name)
+				m.statusExpiry = time.Now().Add(10 * time.Second)
+				m.activeState = stateFleetTable
+				return m, cmd
+			case "n", "N", "esc", "q":
+				m.statusMessage = "[--] Acción cancelada por el usuario"
+				m.statusExpiry = time.Now().Add(3 * time.Second)
+				m.activeState = stateFleetTable
+			}
+
 		case stateFleetTable:
 			filtered := m.filteredMetrics()
 			switch msg.String() {
@@ -213,17 +260,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.fetchLogs(c.ID, c.Name)
 				}
 			case "r":
-				return m, m.fetchMetrics()
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					m.pendingContainer = filtered[m.cursor]
+					m.pendingAction = domain.ActionRestart
+					m.activeState = stateConfirmRemediation
+				}
+			case "s":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					m.pendingContainer = filtered[m.cursor]
+					m.pendingAction = domain.ActionStop
+					m.activeState = stateConfirmRemediation
+				}
+			case "x":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					m.pendingContainer = filtered[m.cursor]
+					m.pendingAction = domain.ActionIsolateNetwork
+					m.activeState = stateConfirmRemediation
+				}
 			case "?":
 				m.activeState = stateHelp
 			}
 		}
 
 	case tickMsg:
+		if !m.statusExpiry.IsZero() && time.Now().After(m.statusExpiry) {
+			m.statusMessage = ""
+			m.statusExpiry = time.Time{}
+		}
 		if m.activeState == stateFleetTable || m.activeState == stateFiltering {
 			cmds = append(cmds, m.fetchMetrics())
 		}
 		cmds = append(cmds, tickCmd())
+
+	case remediationResultMsg:
+		if msg.err != nil {
+			m.statusMessage = fmt.Sprintf("[!!] Error ejecutando %s en '%s': %v", msg.action, msg.containerName, msg.err)
+		} else {
+			m.statusMessage = fmt.Sprintf("[OK] %s completado en '%s' (%v)", strings.ToUpper(string(msg.action)), msg.containerName, msg.elapsed.Round(time.Millisecond))
+		}
+		m.statusExpiry = time.Now().Add(6 * time.Second)
+		cmds = append(cmds, m.fetchMetrics())
 
 	case logsMsg:
 		if msg.err != nil {
@@ -252,6 +328,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.activeState == stateConfirmRemediation {
+		return m.viewConfirmModal()
+	}
+
 	content := ""
 	switch m.activeState {
 	case stateLogViewer:
@@ -271,6 +351,37 @@ func (m Model) View() string {
 		Height(max(10, m.height-2))
 
 	return cardStyle.Render(content)
+}
+
+func (m Model) viewConfirmModal() string {
+	actionStr := strings.ToUpper(string(m.pendingAction))
+	title := StyleModalTitle.Render(fmt.Sprintf("[!!] CONFIRMAR REMEDIACION: %s", actionStr))
+
+	question := fmt.Sprintf("¿Deseas ejecutar %s en el contenedor?\n\n  Contenedor : %s\n  ID          : %s",
+		actionStr,
+		lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(m.pendingContainer.Name),
+		lipgloss.NewStyle().Foreground(ColorSubtext0).Render(m.pendingContainer.ID),
+	)
+
+	keys := fmt.Sprintf("%s Confirmar      %s Cancelar",
+		StyleModalKeyConfirm.Render("[ y / Enter ]"),
+		StyleModalKeyCancel.Render("[ n / Esc ]"),
+	)
+
+	body := fmt.Sprintf("%s\n\n%s\n\n%s", title, question, keys)
+	modalWidth := 56
+	if m.width > 20 && m.width-10 < modalWidth {
+		modalWidth = m.width - 10
+	}
+	modal := StyleModal.Width(modalWidth).Render(body)
+
+	return lipgloss.Place(
+		max(60, m.width-4),
+		max(10, m.height-2),
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+	)
 }
 
 func (m Model) viewTable() string {
@@ -337,13 +448,16 @@ func (m Model) viewTable() string {
 	if m.activeState == stateFiltering {
 		b.WriteString("\n" + m.filterInput.View() + "\n")
 	} else {
-		filterTag := ""
-		if m.filterValue != "" {
-			filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
+		if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
+			b.WriteString("\n" + StyleStatusBar.Render(m.statusMessage))
+		} else {
+			filterTag := ""
+			if m.filterValue != "" {
+				filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
+			}
+			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [/]: Filtro%s", filterTag)
+			b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 		}
-		shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [/]: Filtrar  |  [l/Enter]: Logs  |  [r]: Refrescar  |  [?]: Ayuda  |  Sync: %s%s",
-			m.lastSync.Format("15:04:05"), filterTag)
-		b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 	}
 
 	return b.String()
@@ -368,14 +482,19 @@ func (m Model) viewHelp() string {
 	var b strings.Builder
 
 	b.WriteString(StyleTitle.Render("SOLV SERVER TRACKER :: ATAJOS DE TECLADO") + "\n\n")
-	b.WriteString("  j / Down / ScrollDown : Mover cursor hacia abajo (1 en 1)\n")
-	b.WriteString("  k / Up / ScrollUp     : Mover cursor hacia arriba (1 en 1)\n")
-	b.WriteString("  /                     : Abrir filtro interactivo en tiempo real\n")
-	b.WriteString("  l / Enter             : Abrir visor de logs en vivo a pantalla completa\n")
-	b.WriteString("  r                     : Forzar recoleccion inmediata de metricas\n")
-	b.WriteString("  Esc / h               : Cerrar visor de logs / cancelar filtro\n")
-	b.WriteString("  ?                     : Mostrar / ocultar esta ayuda\n")
-	b.WriteString("  q / Ctrl+C            : Salir de la aplicacion\n\n")
+	b.WriteString("  NAVEGACION:\n")
+	b.WriteString("    j / Down / ScrollDown : Mover cursor hacia abajo (1 en 1)\n")
+	b.WriteString("    k / Up / ScrollUp     : Mover cursor hacia arriba (1 en 1)\n")
+	b.WriteString("    /                     : Abrir filtro interactivo en tiempo real\n")
+	b.WriteString("    l / Enter             : Abrir visor de logs en vivo a pantalla completa\n\n")
+	b.WriteString("  REMEDIACION EN CALIENTE (Cero RCE):\n")
+	b.WriteString("    r                     : Reiniciar contenedor seleccionado (restart)\n")
+	b.WriteString("    s                     : Detener contenedor seleccionado (stop)\n")
+	b.WriteString("    x                     : Aislar contenedor de la red (isolate_network)\n\n")
+	b.WriteString("  SISTEMA:\n")
+	b.WriteString("    Esc / h               : Cerrar visor / cancelar filtro o remediación\n")
+	b.WriteString("    ?                     : Mostrar / ocultar esta ayuda\n")
+	b.WriteString("    q / Ctrl+C            : Salir de la aplicación\n\n")
 	b.WriteString(StyleStatusBar.Render("Presiona Esc para volver a la tabla de contenedores."))
 
 	return b.String()
