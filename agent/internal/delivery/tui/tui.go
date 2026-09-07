@@ -8,6 +8,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
+	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -38,15 +39,28 @@ type remediationResultMsg struct {
 	err           error
 }
 
+type diagnosisResultMsg struct {
+	containerID string
+	diagnosis   string
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
+// TriageService define el contrato para el análisis pasivo con IA.
+type TriageService interface {
+	DiagnoseContainer(ctx context.Context, name, image, status, logs string) string
+}
+
 // Model representa el estado global de la TUI interactiva.
 type Model struct {
 	collector        ports.CollectorPort
+	triageClient     TriageService
+	diagnosisCache   map[string]string
+	triagePending    map[string]bool
 	metrics          []domain.ContainerMetric
 	cursor           int
 	activeState      sessionState
@@ -78,14 +92,17 @@ func NewModel(collector ports.CollectorPort) Model {
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
 
 	return Model{
-		collector:   collector,
-		cursor:      0,
-		activeState: stateFleetTable,
-		filterInput: ti,
-		viewport:    vp,
-		lastSync:    time.Now(),
-		width:       100,
-		height:      24,
+		collector:      collector,
+		triageClient:   ai.NewTriageClient(),
+		diagnosisCache: make(map[string]string),
+		triagePending:  make(map[string]bool),
+		cursor:         0,
+		activeState:    stateFleetTable,
+		filterInput:    ti,
+		viewport:       vp,
+		lastSync:       time.Now(),
+		width:          100,
+		height:         24,
 	}
 }
 
@@ -134,6 +151,41 @@ func (m Model) filteredMetrics() []domain.ContainerMetric {
 	return filtered
 }
 
+func (m Model) isAnomalous(c domain.ContainerMetric) bool {
+	if strings.ToLower(c.Status) != "running" {
+		return true
+	}
+	if c.RAMLimitBytes > 0 && float64(c.RAMBytes)/float64(c.RAMLimitBytes) >= 0.85 {
+		return true
+	}
+	return false
+}
+
+func (m Model) triggerTriageIfAnomalous(c domain.ContainerMetric) tea.Cmd {
+	if m.triageClient == nil || !m.isAnomalous(c) {
+		return nil
+	}
+	if _, cached := m.diagnosisCache[c.ID]; cached {
+		return nil
+	}
+	if m.triagePending[c.ID] {
+		return nil
+	}
+	m.triagePending[c.ID] = true
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+		defer cancel()
+
+		logs, _ := m.collector.GetContainerLogs(ctx, c.ID, 50)
+		diag := m.triageClient.DiagnoseContainer(ctx, c.Name, c.Image, c.Status, logs)
+		return diagnosisResultMsg{
+			containerID: c.ID,
+			diagnosis:   diag,
+		}
+	}
+}
+
 func (m Model) executeRemediation(c domain.ContainerMetric, action domain.ActionType) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
@@ -177,12 +229,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				clickedRow := msg.Y - headerOffset
 				if clickedRow >= 0 && clickedRow < len(filtered) {
 					m.cursor = clickedRow
+					if cmd := m.triggerTriageIfAnomalous(filtered[m.cursor]); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			}
 		case tea.MouseWheelDown:
 			if m.activeState == stateFleetTable || m.activeState == stateFiltering {
 				if len(filtered) > 0 && m.cursor < len(filtered)-1 {
 					m.cursor++
+					if cmd := m.triggerTriageIfAnomalous(filtered[m.cursor]); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			} else if m.activeState == stateLogViewer {
 				m.viewport.LineDown(1)
@@ -191,6 +249,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activeState == stateFleetTable || m.activeState == stateFiltering {
 				if len(filtered) > 0 && m.cursor > 0 {
 					m.cursor--
+					if cmd := m.triggerTriageIfAnomalous(filtered[m.cursor]); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			} else if m.activeState == stateLogViewer {
 				m.viewport.LineUp(1)
@@ -265,10 +326,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "j", "down":
 				if len(filtered) > 0 {
 					m.cursor = (m.cursor + 1) % len(filtered)
+					if cmd := m.triggerTriageIfAnomalous(filtered[m.cursor]); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			case "k", "up":
 				if len(filtered) > 0 {
 					m.cursor = (m.cursor - 1 + len(filtered)) % len(filtered)
+					if cmd := m.triggerTriageIfAnomalous(filtered[m.cursor]); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			case "/":
 				m.activeState = stateFiltering
@@ -320,6 +387,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tickCmd())
 
+	case diagnosisResultMsg:
+		m.diagnosisCache[msg.containerID] = msg.diagnosis
+		delete(m.triagePending, msg.containerID)
+
 	case remediationResultMsg:
 		if msg.err != nil {
 			m.statusMessage = fmt.Sprintf("[!!] Error ejecutando %s en '%s': %v", msg.action, msg.containerName, msg.err)
@@ -346,6 +417,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		filtered := m.filteredMetrics()
 		if m.cursor >= len(filtered) && len(filtered) > 0 {
 			m.cursor = len(filtered) - 1
+		}
+		if len(filtered) > 0 && m.cursor < len(filtered) {
+			if cmd := m.triggerTriageIfAnomalous(filtered[m.cursor]); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case error:
@@ -475,6 +551,23 @@ func (m Model) viewTable() string {
 				b.WriteString(line)
 			}
 			b.WriteString("\n")
+		}
+	}
+
+	// Banner AIOps contextual si el contenedor seleccionado tiene anomalía
+	if len(filtered) > 0 && m.cursor < len(filtered) {
+		selected := filtered[m.cursor]
+		if m.isAnomalous(selected) {
+			diag, cached := m.diagnosisCache[selected.ID]
+			if !cached {
+				if m.triagePending[selected.ID] {
+					diag = "Analizando contenedor con OpenRouter..."
+				} else {
+					diag = "Pendiente de diagnóstico analítico..."
+				}
+			}
+			bannerContent := fmt.Sprintf("%s %s", StyleAIOpsTag.Render("[AIOps]"), diag)
+			b.WriteString("\n" + StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
 		}
 	}
 

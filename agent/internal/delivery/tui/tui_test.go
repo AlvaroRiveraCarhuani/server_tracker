@@ -192,3 +192,103 @@ func TestTUI_MouseLeftRowSelection(t *testing.T) {
 	}
 }
 
+type mockTriageService struct {
+	calls int
+	diag  string
+}
+
+func (m *mockTriageService) DiagnoseContainer(ctx context.Context, name, image, status, logs string) string {
+	m.calls++
+	return m.diag
+}
+
+func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
+	metrics := []domain.ContainerMetric{
+		{
+			ID:            "c-healthy",
+			Name:          "healthy_service",
+			Image:         "nginx:alpine",
+			Status:        "running",
+			RAMBytes:      100 * 1024 * 1024,
+			RAMLimitBytes: 1024 * 1024 * 1024,
+		},
+		{
+			ID:            "c-crashed",
+			Name:          "payment_service",
+			Image:         "payment/api:v1",
+			Status:        "exited",
+			RAMBytes:      0,
+			RAMLimitBytes: 512 * 1024 * 1024,
+		},
+	}
+
+	collector := &mockCollectorForTUI{
+		metrics: metrics,
+		logs:    "FATAL: Database connection timeout\nProcess terminated with exit code 1",
+	}
+
+	mockAI := &mockTriageService{
+		diag: "Database connection timeout -> Verificar conectividad y credenciales de BD",
+	}
+
+	model := NewModel(collector)
+	model.triageClient = mockAI
+	model.metrics = metrics
+	model.cursor = 0
+
+	// 1. Contenedor sano: no debe renderizar banner AIOps
+	renderedHealthy := model.View()
+	if strings.Contains(renderedHealthy, "[AIOps]") {
+		t.Errorf("expected no AIOps banner on healthy container, got:\n%s", renderedHealthy)
+	}
+
+	// 2. Mover cursor con 'j' al contenedor con fallo (payment_service)
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m := newModel.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("expected cursor on row 1, got %d", m.cursor)
+	}
+	if cmd == nil {
+		t.Fatal("expected async triage tea.Cmd for anomalous container, got nil")
+	}
+
+	// 3. Ejecutar el tea.Cmd para obtener el diagnosisResultMsg
+	msg := cmd()
+	diagMsg, ok := msg.(diagnosisResultMsg)
+	if !ok {
+		t.Fatalf("expected diagnosisResultMsg from triage cmd, got %T", msg)
+	}
+	if diagMsg.containerID != "c-crashed" {
+		t.Errorf("expected diagnosis for c-crashed, got %s", diagMsg.containerID)
+	}
+	if mockAI.calls != 1 {
+		t.Errorf("expected exactly 1 AI triage call, got %d", mockAI.calls)
+	}
+
+	// 4. Enviar diagnosisResultMsg al modelo y comprobar que se guarda en caché
+	newModel, _ = m.Update(diagMsg)
+	m = newModel.(Model)
+	if cachedDiag, exists := m.diagnosisCache["c-crashed"]; !exists || cachedDiag != mockAI.diag {
+		t.Errorf("expected cached diagnosis in model, got: %s (exists=%v)", cachedDiag, exists)
+	}
+
+	// 5. Renderizar vista con el contenedor anómalo en foco: debe mostrar el banner [AIOps]
+	renderedCrashed := m.View()
+	if !strings.Contains(renderedCrashed, "[AIOps]") {
+		t.Errorf("expected rendered view to contain [AIOps] tag, got:\n%s", renderedCrashed)
+	}
+	if !strings.Contains(renderedCrashed, "Database connection timeout") {
+		t.Errorf("expected rendered view to contain diagnosis text, got:\n%s", renderedCrashed)
+	}
+
+	// 6. Volver a mover cursor o actualizar: no debe disparar otra llamada a la IA (debe usar caché)
+	_, repeatCmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if repeatCmd != nil {
+		t.Errorf("expected nil cmd due to cached diagnosis, got %v", repeatCmd)
+	}
+	if mockAI.calls != 1 {
+		t.Errorf("expected AI calls to remain 1 due to cache, got %d", mockAI.calls)
+	}
+}
+
+

@@ -66,10 +66,12 @@ Construir una plataforma de **Observabilidad Activa, ChatOps y AIOps** para infr
 - [x] Ejecución en el motor Docker a través de `ports.CollectorPort.ExecuteRemediation`.
 - [x] Notificación de estado en tiempo real en la barra de status (`[OK] Reiniciado en 850ms`).
 
-### Fase 6: Diagnóstico Pasivo Zero-Prompt con OpenRouter en la TUI
-- [ ] Detección desatendida de fallos y salidas anómalas (código != 0, OOMKilled 137, CrashLoopBackOff).
-- [ ] Extracción y envío en segundo plano de logs de crash hacia OpenRouter.
-- [ ] Banner contextual inferior en la TUI con diagnóstico en 1 línea y causa raíz sin necesidad de prompts manuales.
+### Fase 6: Diagnóstico Pasivo Zero-Prompt con OpenRouter en la TUI [COMPLETADA]
+- [x] Detección desatendida de fallos y salidas anómalas (código != 0, OOMKilled 137, CrashLoopBackOff, estado no running u OOM_RISK >= 85%).
+- [x] Extracción y envío en segundo plano de logs de crash hacia OpenRouter con `google/gemma-4-26b-a4b-it:free`.
+- [x] Banner contextual inferior en la TUI con diagnóstico en 1 línea y causa raíz sin necesidad de prompts manuales.
+- [x] Sistema de caché en memoria (`diagnosisCache`) para evitar consultas duplicadas y saturación de cuota HTTP 429.
+
 
 ### Fase 7: Sparklines y Tendencias de CPU/RAM en Tiempo Real
 - [ ] Historial circular en memoria de los últimos 30 deltas de CPU y Working Set RAM por contenedor.

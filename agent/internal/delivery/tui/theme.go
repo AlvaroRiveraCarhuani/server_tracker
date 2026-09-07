@@ -94,6 +94,18 @@ var (
 	StyleBtnBlurred = lipgloss.NewStyle().
 			Foreground(ColorSubtext0).
 			Padding(0, 1)
+
+	StyleAIOpsBanner = lipgloss.NewStyle().
+				BorderStyle(lipgloss.NormalBorder()).
+				BorderTop(true).
+				BorderBottom(true).
+				BorderForeground(ColorSurface1).
+				Foreground(ColorSubtext1).
+				Padding(0, 1)
+
+	StyleAIOpsTag = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorMauve)
 )
 
 // FormatStatus renderiza los glifos ASCII con semántica cromática estricta y alto contraste
