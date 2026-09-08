@@ -19,7 +19,10 @@ type VaultPort interface {
 	Get() (serverURL string, secretToken string, err error)
 	SaveOpenRouterKey(key string) error
 	GetOpenRouterKey() (string, error)
+	SaveAIConfig(cfg domain.AIConfig) error
+	GetAIConfig() (domain.AIConfig, error)
 }
+
 
 // BufferPort define el buffer circular en memoria para retención de telemetría.
 type BufferPort interface {

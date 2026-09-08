@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
 )
 
@@ -50,6 +51,72 @@ func TestVault_EncryptDecryptLocalFile(t *testing.T) {
 	if gotToken != secretToken {
 		t.Errorf("esperado Token %s, obtenido %s", secretToken, gotToken)
 	}
+
+	// 3. Verificar que falle si no existe
+	vEmpty := vault.NewFileVault(filepath.Join(tempDir, "non_existent.enc"), passphrase)
+	if _, err := vEmpty.GetOpenRouterKey(); err == nil {
+		t.Fatalf("esperaba error al leer clave de bóveda inexistente")
+	}
+}
+
+func TestVault_AIConfigPersistence(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_vault_ai_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	passphrase := "entropy_for_ai_tests"
+
+	v := vault.NewFileVault(filePath, passphrase)
+
+	cfg := domain.DefaultAIConfig()
+	cfg.ActiveProvider = domain.ProviderAnthropic
+	cfg.ActiveModel = "claude-3-5-sonnet-latest"
+	cfg.Providers[domain.ProviderAnthropic] = domain.ProviderConfig{
+		APIKey:       "sk-ant-test-key-12345678",
+		DefaultModel: "claude-3-5-sonnet-latest",
+	}
+
+	// 1. Guardar configuración completa cifrada en disco
+	if err := v.SaveAIConfig(cfg); err != nil {
+		t.Fatalf("error guardando AIConfig: %v", err)
+	}
+
+	// 2. Recuperar y verificar campos
+	gotCfg, err := v.GetAIConfig()
+	if err != nil {
+		t.Fatalf("error leyendo AIConfig: %v", err)
+	}
+
+	if gotCfg.ActiveProvider != domain.ProviderAnthropic {
+		t.Errorf("esperaba provider anthropic, obtenido %v", gotCfg.ActiveProvider)
+	}
+	if gotCfg.ActiveModel != "claude-3-5-sonnet-latest" {
+		t.Errorf("esperaba model claude-3-5-sonnet-latest, obtenido %v", gotCfg.ActiveModel)
+	}
+	antCfg := gotCfg.Providers[domain.ProviderAnthropic]
+	if antCfg.APIKey != "sk-ant-test-key-12345678" {
+		t.Errorf("clave de Anthropic no coincide: %s", antCfg.APIKey)
+	}
+	if antCfg.MaskedKey() != "••••5678" {
+		t.Errorf("esperaba clave ofuscada ••••5678, obtenido %s", antCfg.MaskedKey())
+	}
+}
+
+func TestVault_EncryptDecryptLocalFile_AuthError(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_vault_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	passphrase := "super_secret_master_key_123"
+
+	v := vault.NewFileVault(filePath, passphrase)
+	v.Save("https://tracker.solv.internal:8000", "psk_live_9876543210abcdef")
 
 	// 4. Intentar descifrar con passphrase incorrecta -> debe fallar
 	vBad := vault.NewFileVault(filePath, "wrong_password")

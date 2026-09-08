@@ -85,11 +85,13 @@ var (
 	StyleModal = lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(ColorPeach).
+			BorderBackground(ColorSurface0).
 			Padding(1, 2).
 			Background(ColorSurface0)
 
 	StyleModalTitle = lipgloss.NewStyle().
 			Bold(true).
+			Background(ColorSurface0).
 			Foreground(ColorPeach)
 
 	StyleBtnFocusedConfirm = lipgloss.NewStyle().

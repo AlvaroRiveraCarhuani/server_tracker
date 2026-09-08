@@ -7,6 +7,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type mockCollectorForTUI struct {
@@ -130,8 +131,8 @@ func TestTUI_ConfirmModalRender(t *testing.T) {
 	model.activeState = stateConfirmRemediation
 
 	rendered := model.View()
-	if !strings.Contains(rendered, "CONFIRMAR REMEDIACION") {
-		t.Errorf("expected rendered view to contain CONFIRMAR REMEDIACION, got:\n%s", rendered)
+	if !strings.Contains(rendered, "Confirmar acción") {
+		t.Errorf("expected rendered view to contain Confirmar acción, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "ISOLATE_NETWORK") {
 		t.Errorf("expected rendered view to contain ISOLATE_NETWORK, got:\n%s", rendered)
@@ -200,6 +201,11 @@ type mockTriageService struct {
 func (m *mockTriageService) DiagnoseContainer(ctx context.Context, name, image, status, logs string) string {
 	m.calls++
 	return m.diag
+}
+
+func (m *mockTriageService) DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
+	m.calls++
+	return m.diag, domain.TokenUsage{PromptTokens: 120, CompletionTokens: 25, TotalTokens: 145, EstimatedCostUSD: 0.0003}
 }
 
 func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
@@ -347,9 +353,10 @@ func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
 }
 
 type mockVaultForTUI struct {
-	savedURL   string
-	savedToken string
-	savedKey   string
+	savedURL      string
+	savedToken    string
+	savedKey      string
+	savedAIConfig domain.AIConfig
 }
 
 func (m *mockVaultForTUI) Save(serverURL, secretToken string) error {
@@ -371,45 +378,85 @@ func (m *mockVaultForTUI) GetOpenRouterKey() (string, error) {
 	return m.savedKey, nil
 }
 
+func (m *mockVaultForTUI) SaveAIConfig(cfg domain.AIConfig) error {
+	m.savedAIConfig = cfg
+	if p, ok := cfg.Providers[domain.ProviderOpenRouter]; ok {
+		m.savedKey = p.APIKey
+	}
+	return nil
+}
+
+func (m *mockVaultForTUI) GetAIConfig() (domain.AIConfig, error) {
+	if m.savedAIConfig.ActiveProvider != "" {
+		return m.savedAIConfig, nil
+	}
+	cfg := domain.DefaultAIConfig()
+	if m.savedKey != "" {
+		p := cfg.Providers[domain.ProviderOpenRouter]
+		p.APIKey = m.savedKey
+		cfg.Providers[domain.ProviderOpenRouter] = p
+	}
+	return cfg, nil
+}
+
 func TestTUI_ConfigModalWorkflow(t *testing.T) {
 	collector := &mockCollectorForTUI{metrics: sampleMetrics()}
 	vaultMock := &mockVaultForTUI{}
 	model := NewModel(collector, vaultMock)
 	model.metrics = sampleMetrics()
 
-	// 1. Abrir modal con 'c'
+	// 1. Abrir modal con 'c' -> configViewSelectModel (OpenCode style)
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m := newModel.(Model)
 	if m.activeState != stateConfigModal {
 		t.Fatalf("expected activeState to be stateConfigModal, got %v", m.activeState)
 	}
-
-	// 2. Renderizar vista del modal
-	renderedModal := m.View()
-	if !strings.Contains(renderedModal, "CONFIGURACION SEGURA") || !strings.Contains(renderedModal, "Blindaje D2") {
-		t.Errorf("expected view to contain modal header and D2 shield, got:\n%s", renderedModal)
+	if m.configMode != configViewSelectModel {
+		t.Fatalf("expected configMode to be configViewSelectModel, got %v", m.configMode)
 	}
 
-	// 3. Escribir texto en el input
-	for _, r := range "sk-or-v1-testkey123" {
+	// 2. Renderizar vista estilo OpenCode
+	renderedModal := m.View()
+	if !strings.Contains(renderedModal, "Select model") || !strings.Contains(renderedModal, "Search") {
+		t.Errorf("expected view to contain OpenCode header 'Select model' and 'Search', got:\n%s", renderedModal)
+	}
+	if !strings.Contains(renderedModal, "Ctrl+A: Connect provider") {
+		t.Errorf("expected view to contain shortcut guide for Ctrl+A, got:\n%s", renderedModal)
+	}
+
+	// 3. Presionar Ctrl+A para conectar credencial de proveedor
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	m = newModel.(Model)
+	if m.configMode != configViewConnectKey {
+		t.Fatalf("expected configMode to be configViewConnectKey after Ctrl+A, got %v", m.configMode)
+	}
+
+	// 4. Escribir clave de Anthropic
+	for _, r := range "sk-ant-testkey999" {
 		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = newModel.(Model)
 	}
 
-	// 4. Presionar Enter para guardar
+	// 5. Presionar Enter para guardar clave en la bóveda
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(Model)
 
+	if m.configMode != configViewSelectModel {
+		t.Errorf("expected to return to configViewSelectModel after saving key, got %v", m.configMode)
+	}
+	antCfg := vaultMock.savedAIConfig.Providers[m.connectProvider]
+	if antCfg.APIKey != "sk-ant-testkey999" {
+		t.Errorf("expected vault to store provider key, got %s", antCfg.APIKey)
+	}
+
+	// 6. Salir del modal con Esc
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
 	if m.activeState != stateFleetTable {
-		t.Errorf("expected state to return to stateFleetTable after Enter, got %v", m.activeState)
-	}
-	if vaultMock.savedKey != "sk-or-v1-testkey123" {
-		t.Errorf("expected vault to store key, got %s", vaultMock.savedKey)
-	}
-	if !strings.Contains(m.statusMessage, "[OK]") {
-		t.Errorf("expected statusMessage to indicate success, got %s", m.statusMessage)
+		t.Errorf("expected activeState stateFleetTable after Esc, got %v", m.activeState)
 	}
 }
+
 
 func TestTUI_ShellAttachBehavior(t *testing.T) {
 	metrics := []domain.ContainerMetric{
@@ -475,6 +522,120 @@ func TestTUI_RenderLayoutSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "bold_panini") {
 		t.Errorf("expected bold_panini in rendered view")
+	}
+}
+
+func TestTUI_RenderModalOverlaySnapshot(t *testing.T) {
+	metrics := []domain.ContainerMetric{
+		{ID: "119ed9c878f6", Name: "solv-lab-86e98f79-843a-4b27-ab31-276f59cee512", Status: "running", CPUPercent: 0.0, Image: "nginx:alpine"},
+		{ID: "c-2", Name: "gallant_moore", Status: "exited", CPUPercent: 0.0, Image: "postgres:16-alpine"},
+	}
+	collector := &mockCollectorForTUI{metrics: metrics}
+	model := NewModel(collector)
+	model.metrics = metrics
+	model.width = 100
+	model.height = 24
+	model.cursor = 0
+
+	// Activar modal de restart con 'r'
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m := newModel.(Model)
+
+	rendered := m.View()
+	t.Logf("MODAL OVERLAY SNAPSHOT:\n%s\n", rendered)
+
+	// Validar que el fondo siga existiendo (CONTENEDORES)
+	if !strings.Contains(rendered, "CONTENEDORES") {
+		t.Errorf("expected background CONTENEDORES to remain visible in overlay mode")
+	}
+
+	// Validar que el modal contenga los elementos solicitados
+	if !strings.Contains(rendered, "Confirmar acción: RESTART") {
+		t.Errorf("expected modal title in overlay")
+	}
+	if !strings.Contains(rendered, "solv-lab-86e98f79-843a-4b27-ab31-276f59cee512") {
+		t.Errorf("expected container name in overlay")
+	}
+	if !strings.Contains(rendered, "CONFIRMAR (y)") || !strings.Contains(rendered, "CANCELAR (n/Esc)") {
+		t.Errorf("expected button labels in overlay")
+	}
+}
+
+func TestTUI_ConfirmModalNavigation(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	model := NewModel(mockColl)
+	model.width = 100
+	model.height = 30
+	model.metrics = []domain.ContainerMetric{
+		{
+			ID:     "119ed9c878f6",
+			Name:   "test-container",
+			Image:  "nginx:alpine",
+			Status: "running",
+		},
+	}
+
+
+	// Abrir modal de restart
+	m1, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	mod := m1.(Model)
+	if mod.activeState != stateConfirmRemediation {
+		t.Fatalf("expected stateConfirmRemediation, got %v", mod.activeState)
+	}
+	if mod.confirmModalBtn != 0 {
+		t.Errorf("expected default button to be 0 (Confirm), got %d", mod.confirmModalBtn)
+	}
+
+	// Flecha derecha: debe cambiar a 1 (Cancel)
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRight})
+	mod = m2.(Model)
+	if mod.confirmModalBtn != 1 {
+		t.Errorf("expected button to be 1 after Right arrow, got %d", mod.confirmModalBtn)
+	}
+
+	// Flecha izquierda: debe volver a 0 (Confirm)
+	m3, _ := mod.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	mod = m3.(Model)
+	if mod.confirmModalBtn != 0 {
+		t.Errorf("expected button to be 0 after Left arrow, got %d", mod.confirmModalBtn)
+	}
+
+	// Tab: alternar a 1
+	m4, _ := mod.Update(tea.KeyMsg{Type: tea.KeyTab})
+	mod = m4.(Model)
+	if mod.confirmModalBtn != 1 {
+		t.Errorf("expected button to be 1 after Tab, got %d", mod.confirmModalBtn)
+	}
+
+	// Enter en Cancelar: debe volver a stateFleetTable
+	m5, _ := mod.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mod = m5.(Model)
+	if mod.activeState != stateFleetTable {
+		t.Errorf("expected activeState stateFleetTable after Cancel enter, got %v", mod.activeState)
+	}
+}
+
+func TestTUI_ConfirmModalButtonUniformity(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	model := NewModel(mockColl)
+	model.width = 100
+	model.height = 30
+	model.confirmModalBtn = 0
+	model.pendingAction = "restart"
+	model.pendingContainer = domain.ContainerMetric{
+		ID:   "25aacfda6c48",
+		Name: "intelligent_goldwasser",
+	}
+
+	for btn := 0; btn <= 1; btn++ {
+		model.confirmModalBtn = btn
+		modalView := model.viewConfirmModal()
+		lines := strings.Split(modalView, "\n")
+		for _, l := range lines {
+			if w := ansi.StringWidth(l); w != 72 {
+				t.Errorf("expected modal line width to be exactly 72 columns, got %d for line %q", w, l)
+			}
+		}
 	}
 }
 

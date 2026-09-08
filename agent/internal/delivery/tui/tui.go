@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type sessionState int
@@ -48,11 +49,20 @@ type remediationResultMsg struct {
 type diagnosisResultMsg struct {
 	containerID string
 	diagnosis   string
+	usage       domain.TokenUsage
 }
 
 type shellFinishedMsg struct {
 	err error
 }
+
+type configViewMode int
+
+const (
+	configViewSelectModel configViewMode = iota
+	configViewConnectKey
+	configViewCustomModel
+)
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
@@ -60,25 +70,42 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-// TriageService define el contrato para el análisis pasivo con IA.
+// TriageService define el contrato para el análisis pasivo con IA y reporte de tokens.
 type TriageService interface {
 	DiagnoseContainer(ctx context.Context, name, image, status, logs string) string
+	DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage)
 }
 
 // Model representa el estado global de la TUI interactiva.
 type Model struct {
-	collector        ports.CollectorPort
-	vaultService     ports.VaultPort
-	triageClient     TriageService
-	diagnosisCache   map[string]string
-	triagePending    map[string]bool
-	metricsHistory   map[string]*MetricHistory
-	metrics          []domain.ContainerMetric
-	cursor           int
-	activeState      sessionState
-	filterInput      textinput.Model
-	apiKeyInput      textinput.Model
-	filterValue      string
+	collector          ports.CollectorPort
+	vaultService       ports.VaultPort
+	triageClient       TriageService
+	diagnosisCache     map[string]string
+	lastDiagnosisUsage map[string]domain.TokenUsage
+	triagePending      map[string]bool
+	metricsHistory     map[string]*MetricHistory
+	metrics            []domain.ContainerMetric
+	cursor             int
+	activeState        sessionState
+	filterInput        textinput.Model
+	filterValue        string
+
+	// Estado del Modal de IA estilo OpenCode
+	configMode         configViewMode
+	modelSearchInput   textinput.Model
+	apiKeyInput        textinput.Model
+	endpointInput      textinput.Model
+	customModelInput   textinput.Model
+	connectFocusField  int // 0: Key, 1: Endpoint
+	modelListCursor    int
+	connectProvider    domain.AIProvider
+	aiConfig           domain.AIConfig
+
+	// Métricas de consumo AIOps
+	sessionTokensUsed int
+	sessionCostUSD    float64
+
 	viewport         viewport.Model
 	selectedName     string
 	selectedID       string
@@ -101,12 +128,39 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	ti.Prompt = "/ "
 	ti.PromptStyle = StyleFilterPrompt
 
+	// Input para búsqueda de modelos OpenCode style
+	ms := textinput.New()
+	ms.Placeholder = "Buscar modelo o proveedor..."
+	ms.Prompt = "Search "
+	ms.PromptStyle = lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
+	ms.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+	ms.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
+
+	// Input para clave de API
 	ki := textinput.New()
-	ki.Placeholder = "sk-or-v1-..."
-	ki.Prompt = "Clave API: "
-	ki.PromptStyle = StyleFilterPrompt
+	ki.Placeholder = "sk-... o clave del proveedor"
+	ki.Prompt = "API Key: "
+	ki.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Bold(true)
+	ki.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+	ki.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
 	ki.EchoMode = textinput.EchoPassword
 	ki.EchoCharacter = '•'
+
+	// Input para Base URL / Endpoint
+	ei := textinput.New()
+	ei.Placeholder = "https://api... o http://localhost:11434"
+	ei.Prompt = "Base URL: "
+	ei.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Bold(true)
+	ei.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+	ei.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
+
+	// Input para modelo custom
+	ci := textinput.New()
+	ci.Placeholder = "ej. deepseek/deepseek-r1 o claude-3-7-sonnet"
+	ci.Prompt = "Model ID: "
+	ci.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Bold(true)
+	ci.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+	ci.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
@@ -124,31 +178,46 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		vaultSvc = vault.NewCascadeVault(vaultPath, passphrase)
 	}
 
-	var triageClient TriageService
+	var aiCfg domain.AIConfig
 	if vaultSvc != nil {
-		if key, err := vaultSvc.GetOpenRouterKey(); err == nil && key != "" {
-			triageClient = ai.NewTriageClientWithKey(key)
+		if c, err := vaultSvc.GetAIConfig(); err == nil {
+			aiCfg = c
+		} else {
+			aiCfg = domain.DefaultAIConfig()
 		}
+	} else {
+		aiCfg = domain.DefaultAIConfig()
 	}
-	if triageClient == nil {
+
+	var triageClient TriageService
+	if aiCfg.ActiveProvider != "" {
+		triageClient = ai.NewTriageClientWithConfig(aiCfg)
+	} else {
 		triageClient = ai.NewTriageClient()
 	}
 
 	return Model{
-		collector:      collector,
-		vaultService:   vaultSvc,
-		triageClient:   triageClient,
-		diagnosisCache: make(map[string]string),
-		triagePending:  make(map[string]bool),
-		metricsHistory: make(map[string]*MetricHistory),
-		cursor:         0,
-		activeState:    stateFleetTable,
-		filterInput:    ti,
-		apiKeyInput:    ki,
-		viewport:       vp,
-		lastSync:       time.Now(),
-		width:          100,
-		height:         24,
+		collector:          collector,
+		vaultService:       vaultSvc,
+		triageClient:       triageClient,
+		diagnosisCache:     make(map[string]string),
+		lastDiagnosisUsage: make(map[string]domain.TokenUsage),
+		triagePending:      make(map[string]bool),
+		metricsHistory:     make(map[string]*MetricHistory),
+		cursor:             0,
+		activeState:        stateFleetTable,
+		filterInput:        ti,
+		modelSearchInput:   ms,
+		apiKeyInput:        ki,
+		endpointInput:      ei,
+		customModelInput:   ci,
+		aiConfig:           aiCfg,
+		configMode:         configViewSelectModel,
+		connectProvider:    aiCfg.ActiveProvider,
+		viewport:           vp,
+		lastSync:           time.Now(),
+		width:              100,
+		height:             24,
 	}
 }
 
@@ -224,10 +293,11 @@ func (m Model) triggerTriageIfAnomalous(c domain.ContainerMetric) tea.Cmd {
 		defer cancel()
 
 		logs, _ := m.collector.GetContainerLogs(ctx, c.ID, 50)
-		diag := m.triageClient.DiagnoseContainer(ctx, c.Name, c.Image, c.Status, logs)
+		diag, usage := m.triageClient.DiagnoseContainerWithUsage(ctx, c.Name, c.Image, c.Status, logs)
 		return diagnosisResultMsg{
 			containerID: c.ID,
 			diagnosis:   diag,
+			usage:       usage,
 		}
 	}
 }
@@ -365,34 +435,219 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case stateConfigModal:
-			switch msg.String() {
-			case "esc":
-				m.apiKeyInput.Blur()
-				m.activeState = stateFleetTable
-				return m, nil
-			case "enter":
-				val := strings.TrimSpace(m.apiKeyInput.Value())
-				if val != "" {
-					if m.vaultService != nil {
-						if err := m.vaultService.SaveOpenRouterKey(val); err != nil {
-							m.statusMessage = fmt.Sprintf("[!!] Error guardando clave en bóveda: %v", err)
-						} else {
-							m.statusMessage = "[OK] Clave de OpenRouter cifrada en bóveda local (AES-256-GCM)"
+			items := m.getFilteredModelItems()
+			switch m.configMode {
+			case configViewSelectModel:
+				switch msg.String() {
+				case "esc", "ctrl+c":
+					m.modelSearchInput.Blur()
+					m.activeState = stateFleetTable
+					return m, nil
+				case "up", "ctrl+p", "ctrl+k":
+					if len(items) > 0 {
+						newCursor := m.modelListCursor - 1
+						for newCursor >= 0 && items[newCursor].isHeader {
+							newCursor--
 						}
-					} else {
-						m.statusMessage = "[OK] Clave de OpenRouter configurada en memoria"
+						if newCursor >= 0 {
+							m.modelListCursor = newCursor
+						}
 					}
-					m.triageClient = ai.NewTriageClientWithKey(val)
-					m.diagnosisCache = make(map[string]string)
-					m.statusExpiry = time.Now().Add(5 * time.Second)
+					return m, nil
+				case "down", "ctrl+n", "ctrl+j":
+					if len(items) > 0 {
+						newCursor := m.modelListCursor + 1
+						for newCursor < len(items) && items[newCursor].isHeader {
+							newCursor++
+						}
+						if newCursor < len(items) {
+							m.modelListCursor = newCursor
+						}
+					}
+					return m, nil
+				case "ctrl+a":
+					// Conectar / editar API Key del ítem seleccionado o activo
+					selectedProv := m.aiConfig.ActiveProvider
+					if m.modelListCursor >= 0 && m.modelListCursor < len(items) {
+						it := items[m.modelListCursor]
+						if !it.isHeader && !it.isCustom {
+							selectedProv = it.option.Provider
+						}
+					}
+					m.connectProvider = selectedProv
+					m.configMode = configViewConnectKey
+					m.connectFocusField = 0
+					pCfg := m.aiConfig.Providers[selectedProv]
+					m.apiKeyInput.Reset()
+					m.apiKeyInput.SetValue(pCfg.APIKey)
+					m.endpointInput.Reset()
+					m.endpointInput.SetValue(pCfg.Endpoint)
+					m.apiKeyInput.Focus()
+					m.endpointInput.Blur()
+					return m, textinput.Blink
+				case "enter":
+					if m.modelListCursor >= 0 && m.modelListCursor < len(items) {
+						it := items[m.modelListCursor]
+						if it.isHeader {
+							return m, nil
+						}
+						if it.isCustom {
+							m.configMode = configViewCustomModel
+							m.customModelInput.Reset()
+							m.customModelInput.SetValue(m.aiConfig.ActiveModel)
+							m.customModelInput.Focus()
+							return m, textinput.Blink
+						}
+						// Modelo de catálogo
+						prov := it.option.Provider
+						pCfg := m.aiConfig.Providers[prov]
+						meta := domain.GetProviderMeta(prov)
+
+						// Si requiere key y no tiene, pasar directo a conectar key
+						if meta.RequiresKey && strings.TrimSpace(pCfg.APIKey) == "" {
+							m.connectProvider = prov
+							m.configMode = configViewConnectKey
+							m.connectFocusField = 0
+							m.apiKeyInput.Reset()
+							m.endpointInput.Reset()
+							m.endpointInput.SetValue(pCfg.Endpoint)
+							m.apiKeyInput.Focus()
+							m.endpointInput.Blur()
+							m.statusMessage = fmt.Sprintf("[INFO] %s requiere clave API para activarse", meta.Name)
+							m.statusExpiry = time.Now().Add(3 * time.Second)
+							return m, textinput.Blink
+						}
+
+						// Activar modelo y proveedor
+						m.aiConfig.ActiveProvider = prov
+						m.aiConfig.ActiveModel = it.option.ID
+						pCfg.DefaultModel = it.option.ID
+						m.aiConfig.Providers[prov] = pCfg
+						if m.vaultService != nil {
+							_ = m.vaultService.SaveAIConfig(m.aiConfig)
+						}
+						m.triageClient = ai.NewTriageClientWithConfig(m.aiConfig)
+						m.diagnosisCache = make(map[string]string)
+						m.statusMessage = fmt.Sprintf("[OK] Modelo activo: %s (%s)", it.option.DisplayName, meta.Name)
+						m.statusExpiry = time.Now().Add(4 * time.Second)
+						m.activeState = stateFleetTable
+						return m, nil
+					}
+				default:
+					var cmd tea.Cmd
+					m.modelSearchInput, cmd = m.modelSearchInput.Update(msg)
+					// Reajustar cursor al primer ítem seleccionable si la lista cambia
+					newItems := m.getFilteredModelItems()
+					if m.modelListCursor >= len(newItems) {
+						m.modelListCursor = 0
+					}
+					for m.modelListCursor < len(newItems) && newItems[m.modelListCursor].isHeader {
+						m.modelListCursor++
+					}
+					return m, cmd
 				}
-				m.apiKeyInput.Blur()
-				m.activeState = stateFleetTable
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
-				return m, cmd
+
+			case configViewConnectKey:
+				switch msg.String() {
+				case "esc":
+					m.apiKeyInput.Blur()
+					m.endpointInput.Blur()
+					m.configMode = configViewSelectModel
+					m.modelSearchInput.Focus()
+					return m, textinput.Blink
+				case "tab", "down":
+					m.connectFocusField = (m.connectFocusField + 1) % 2
+					if m.connectFocusField == 0 {
+						m.apiKeyInput.Focus()
+						m.endpointInput.Blur()
+					} else {
+						m.apiKeyInput.Blur()
+						m.endpointInput.Focus()
+					}
+					return m, textinput.Blink
+				case "shift+tab", "up":
+					m.connectFocusField = (m.connectFocusField + 1) % 2
+					if m.connectFocusField == 0 {
+						m.apiKeyInput.Focus()
+						m.endpointInput.Blur()
+					} else {
+						m.apiKeyInput.Blur()
+						m.endpointInput.Focus()
+					}
+					return m, textinput.Blink
+				case "enter":
+					valKey := strings.TrimSpace(m.apiKeyInput.Value())
+					valEP := strings.TrimSpace(m.endpointInput.Value())
+					prov := m.connectProvider
+					meta := domain.GetProviderMeta(prov)
+					pCfg := m.aiConfig.Providers[prov]
+					pCfg.APIKey = valKey
+					pCfg.Endpoint = valEP
+					if pCfg.DefaultModel == "" {
+						pCfg.DefaultModel = meta.DefaultModel
+					}
+					m.aiConfig.Providers[prov] = pCfg
+					m.aiConfig.ActiveProvider = prov
+					m.aiConfig.ActiveModel = pCfg.DefaultModel
+
+					if m.vaultService != nil {
+						if err := m.vaultService.SaveAIConfig(m.aiConfig); err != nil {
+							m.statusMessage = fmt.Sprintf("[!!] Error guardando en bóveda: %v", err)
+						} else {
+							m.statusMessage = fmt.Sprintf("[OK] Clave de %s cifrada bajo Blindaje D2 (AES-256-GCM)", meta.Name)
+						}
+					}
+					m.triageClient = ai.NewTriageClientWithConfig(m.aiConfig)
+					m.diagnosisCache = make(map[string]string)
+					m.statusExpiry = time.Now().Add(4 * time.Second)
+					m.apiKeyInput.Blur()
+					m.endpointInput.Blur()
+					m.configMode = configViewSelectModel
+					m.modelSearchInput.Focus()
+					return m, textinput.Blink
+				default:
+					var cmd tea.Cmd
+					if m.connectFocusField == 0 {
+						m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
+					} else {
+						m.endpointInput, cmd = m.endpointInput.Update(msg)
+					}
+					return m, cmd
+				}
+
+			case configViewCustomModel:
+				switch msg.String() {
+				case "esc":
+					m.customModelInput.Blur()
+					m.configMode = configViewSelectModel
+					m.modelSearchInput.Focus()
+					return m, textinput.Blink
+				case "enter":
+					customVal := strings.TrimSpace(m.customModelInput.Value())
+					if customVal != "" {
+						m.aiConfig.ActiveModel = customVal
+						prov := m.aiConfig.ActiveProvider
+						pCfg := m.aiConfig.Providers[prov]
+						pCfg.DefaultModel = customVal
+						m.aiConfig.Providers[prov] = pCfg
+						if m.vaultService != nil {
+							_ = m.vaultService.SaveAIConfig(m.aiConfig)
+						}
+						m.triageClient = ai.NewTriageClientWithConfig(m.aiConfig)
+						m.diagnosisCache = make(map[string]string)
+						m.statusMessage = fmt.Sprintf("[OK] Modelo personalizado activo: %s", customVal)
+						m.statusExpiry = time.Now().Add(4 * time.Second)
+						m.activeState = stateFleetTable
+						return m, nil
+					}
+					m.configMode = configViewSelectModel
+					m.modelSearchInput.Focus()
+					return m, textinput.Blink
+				default:
+					var cmd tea.Cmd
+					m.customModelInput, cmd = m.customModelInput.Update(msg)
+					return m, cmd
+				}
 			}
 
 		case stateFleetTable:
@@ -443,9 +698,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "c":
 				m.activeState = stateConfigModal
-				m.apiKeyInput.Reset()
-				m.apiKeyInput.Focus()
+				m.configMode = configViewSelectModel
+				m.modelSearchInput.Reset()
+				m.modelSearchInput.Focus()
+				m.modelListCursor = 0
+				items := m.getFilteredModelItems()
+				for idx, it := range items {
+					if it.isActive {
+						m.modelListCursor = idx
+						break
+					}
+				}
 				return m, textinput.Blink
+
 			case "r":
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.pendingContainer = filtered[m.cursor]
@@ -493,6 +758,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case diagnosisResultMsg:
 		m.diagnosisCache[msg.containerID] = msg.diagnosis
+		m.lastDiagnosisUsage[msg.containerID] = msg.usage
+		if msg.usage.TotalTokens > 0 {
+			m.sessionTokensUsed += msg.usage.TotalTokens
+			m.sessionCostUSD += msg.usage.EstimatedCostUSD
+		}
 		delete(m.triagePending, msg.containerID)
 
 	case remediationResultMsg:
@@ -555,94 +825,398 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	if m.activeState == stateConfirmRemediation {
-		return m.viewConfirmModal()
-	}
-	if m.activeState == stateConfigModal {
-		return m.viewConfigModal()
-	}
-
+	baseView := ""
 	switch m.activeState {
 	case stateLogViewer:
-		return m.viewLogs()
-	case stateHelp:
-		return m.viewHelp()
+		baseView = m.viewLogs()
 	default:
-		return m.viewTable()
+		baseView = m.viewTable()
 	}
+
+	if m.activeState == stateHelp {
+		return overlayModal(baseView, m.viewHelp(), m.width, m.height)
+	}
+
+	if m.activeState == stateConfirmRemediation {
+		return overlayModal(baseView, m.viewConfirmModal(), m.width, m.height)
+	}
+
+	if m.activeState == stateConfigModal {
+		return overlayModal(baseView, m.viewConfigModal(), m.width, m.height)
+	}
+
+	return baseView
 }
 
 func (m Model) viewConfirmModal() string {
 	actionStr := strings.ToUpper(string(m.pendingAction))
-	title := StyleModalTitle.Render(fmt.Sprintf("[!!] CONFIRMAR REMEDIACION: %s", actionStr))
+	title := StyleModalTitle.Render(fmt.Sprintf("Confirmar acción: %s", actionStr))
 
-	question := fmt.Sprintf("¿Deseas ejecutar %s en el contenedor?\n\n  Contenedor : %s\n  ID          : %s",
-		actionStr,
-		lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(m.pendingContainer.Name),
-		lipgloss.NewStyle().Foreground(ColorSubtext0).Render(m.pendingContainer.ID),
-	)
+	question := fmt.Sprintf("¿Deseas ejecutar %s en el contenedor?", actionStr)
 
-	var btnConfirm, btnCancel string
+	modalWidth := 70
+	if m.width > 20 && m.width-4 < modalWidth {
+		modalWidth = m.width - 4
+	}
+
+	innerW := modalWidth - 6
+	maxNameW := max(10, innerW-14)
+	cName := truncate(m.pendingContainer.Name, maxNameW)
+
+	containerLine := fmt.Sprintf("Contenedor : %s", lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0).Bold(true).Render(cName))
+	idLine := fmt.Sprintf("ID         : %s", lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(m.pendingContainer.ID))
+
+	btnBase := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderBackground(ColorSurface0).
+		Width(24).
+		Align(lipgloss.Center)
+
+	var btnConfirmStyle, btnCancelStyle lipgloss.Style
+
 	if m.confirmModalBtn == 0 {
-		btnConfirm = StyleBtnFocusedConfirm.Render("[ Confirmar (y / Enter) ]")
-		btnCancel = StyleBtnBlurred.Render("  Cancelar (n / Esc)  ")
+		btnConfirmStyle = btnBase.
+			BorderForeground(ColorGreen).
+			Background(ColorGreen).
+			Foreground(ColorBase).
+			Bold(true)
+
+		btnCancelStyle = btnBase.
+			BorderForeground(ColorSurface2).
+			Background(ColorSurface0).
+			Foreground(ColorSubtext0)
 	} else {
-		btnConfirm = StyleBtnBlurred.Render("  Confirmar (y)  ")
-		btnCancel = StyleBtnFocusedCancel.Render("[ Cancelar (n / Esc / Enter) ]")
+		btnConfirmStyle = btnBase.
+			BorderForeground(ColorSurface2).
+			Background(ColorSurface0).
+			Foreground(ColorSubtext0)
+
+		btnCancelStyle = btnBase.
+			BorderForeground(ColorPeach).
+			Background(ColorPeach).
+			Foreground(ColorBase).
+			Bold(true)
 	}
 
-	keys := fmt.Sprintf("%s      %s", btnConfirm, btnCancel)
+	btnConfirm := btnConfirmStyle.Render("✔  CONFIRMAR (y)")
+	btnCancel := btnCancelStyle.Render("✖  CANCELAR (n/Esc)")
+	sep := lipgloss.NewStyle().Background(ColorSurface0).Render("      \n      \n      ")
 
-	body := fmt.Sprintf("%s\n\n%s\n\n%s", title, question, keys)
-	modalWidth := 56
-	if m.width > 20 && m.width-10 < modalWidth {
-		modalWidth = m.width - 10
-	}
-	modal := StyleModal.Width(modalWidth).Render(body)
+	buttonsRow := lipgloss.JoinHorizontal(lipgloss.Top, btnConfirm, sep, btnCancel)
+	centeredButtons := lipgloss.NewStyle().
+		Width(innerW).
+		Align(lipgloss.Center).
+		Background(ColorSurface0).
+		Render(buttonsRow)
 
-	return lipgloss.Place(
-		max(60, m.width-4),
-		max(10, m.height-2),
-		lipgloss.Center,
-		lipgloss.Center,
-		modal,
+	body := fmt.Sprintf("%s\n\n%s\n\n  %s\n  %s\n\n%s",
+		title,
+		question,
+		containerLine,
+		idLine,
+		centeredButtons,
 	)
+
+	return StyleModal.Width(modalWidth).Render(body)
+}
+
+type modelListItem struct {
+	isHeader     bool
+	headerTitle  string
+	isCustom     bool
+	option       domain.ModelOption
+	isConfigured bool
+	isActive     bool
+}
+
+func (m Model) getFilteredModelItems() []modelListItem {
+	q := strings.ToLower(strings.TrimSpace(m.modelSearchInput.Value()))
+	var items []modelListItem
+
+	if q != "" {
+		for _, mo := range domain.CatalogModels {
+			pCfg := m.aiConfig.Providers[mo.Provider]
+			meta := domain.GetProviderMeta(mo.Provider)
+			isCfg := (!meta.RequiresKey) || (pCfg.APIKey != "")
+			isAct := (mo.Provider == m.aiConfig.ActiveProvider && mo.ID == m.aiConfig.ActiveModel)
+
+			if strings.Contains(strings.ToLower(mo.DisplayName), q) ||
+				strings.Contains(strings.ToLower(mo.ID), q) ||
+				strings.Contains(strings.ToLower(meta.Name), q) ||
+				strings.Contains(strings.ToLower(string(mo.Provider)), q) {
+				items = append(items, modelListItem{
+					option:       mo,
+					isConfigured: isCfg,
+					isActive:     isAct,
+				})
+			}
+		}
+		items = append(items, modelListItem{isCustom: true})
+		return items
+	}
+
+	var activeItems []modelListItem
+	var configuredItems []modelListItem
+	var otherItems []modelListItem
+
+	for _, mo := range domain.CatalogModels {
+		pCfg := m.aiConfig.Providers[mo.Provider]
+		meta := domain.GetProviderMeta(mo.Provider)
+		isCfg := (!meta.RequiresKey) || (pCfg.APIKey != "")
+		isAct := (mo.Provider == m.aiConfig.ActiveProvider && mo.ID == m.aiConfig.ActiveModel)
+
+		item := modelListItem{
+			option:       mo,
+			isConfigured: isCfg,
+			isActive:     isAct,
+		}
+
+		if isAct {
+			activeItems = append(activeItems, item)
+		} else if isCfg {
+			configuredItems = append(configuredItems, item)
+		} else {
+			otherItems = append(otherItems, item)
+		}
+	}
+
+	if len(activeItems) > 0 {
+		items = append(items, modelListItem{isHeader: true, headerTitle: "Active"})
+		items = append(items, activeItems...)
+	}
+
+	if len(configuredItems) > 0 {
+		items = append(items, modelListItem{isHeader: true, headerTitle: "Configured"})
+		items = append(items, configuredItems...)
+	}
+
+	if len(otherItems) > 0 {
+		items = append(items, modelListItem{isHeader: true, headerTitle: "Other Providers"})
+		items = append(items, otherItems...)
+	}
+
+	items = append(items, modelListItem{isCustom: true})
+	return items
 }
 
 func (m Model) viewConfigModal() string {
-	title := StyleModalTitle.Render("  CONFIGURACION SEGURA: MOTOR AIOps  ")
-
-	desc := lipgloss.NewStyle().Foreground(ColorText).Render(
-		"Ingrese su API Key de OpenRouter para activar el\ndiagnóstico Zero-Prompt en tiempo real.\n\n" +
-			lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Blindaje D2: La clave se almacena cifrada en disco con\nAES-256-GCM y derivación de clave Argon2id (~/.solv/vault.enc)."),
-	)
-
-	inputBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorMauve).
-		Padding(0, 1).
-		Width(52).
-		Render(m.apiKeyInput.View())
-
-	help := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
-		"[Enter] Guardar Cifrado    [Esc] Cancelar",
-	)
-
-	body := fmt.Sprintf("%s\n\n%s\n\n%s\n\n%s", title, desc, inputBox, help)
-	modalWidth := 58
-	if m.width > 20 && m.width-10 < modalWidth {
-		modalWidth = m.width - 10
+	modalWidth := 66
+	if m.width > 20 && m.width-4 < modalWidth {
+		modalWidth = m.width - 4
 	}
-	modal := StyleModal.Width(modalWidth).Render(body)
+	innerW := modalWidth - 6
 
-	return lipgloss.Place(
-		max(60, m.width-4),
-		max(10, m.height-2),
-		lipgloss.Center,
-		lipgloss.Center,
-		modal,
-	)
+	switch m.configMode {
+	case configViewConnectKey:
+		meta := domain.GetProviderMeta(m.connectProvider)
+		pCfg := m.aiConfig.Providers[m.connectProvider]
+
+		escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+		headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0).Render(fmt.Sprintf("Configurar %s", meta.Name))
+		spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
+		header := lipgloss.NewStyle().Background(ColorSurface0).Render(headerLeft + strings.Repeat(" ", spLen) + escBadge)
+
+		keyBorderColor := ColorSurface2
+		if m.connectFocusField == 0 {
+			keyBorderColor = ColorMauve
+		}
+		keyBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(keyBorderColor).
+			BorderBackground(ColorSurface0).
+			Background(ColorSurface0).
+			Padding(0, 1).
+			Width(innerW - 4).
+			Render(m.apiKeyInput.View())
+
+		epBorderColor := ColorSurface2
+		if m.connectFocusField == 1 {
+			epBorderColor = ColorMauve
+		}
+		epBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(epBorderColor).
+			BorderBackground(ColorSurface0).
+			Background(ColorSurface0).
+			Padding(0, 1).
+			Width(innerW - 4).
+			Render(m.endpointInput.View())
+
+		masked := pCfg.MaskedKey()
+		statusInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(fmt.Sprintf("Estado actual: %s", lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Render(masked)))
+
+		saveBtn := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorGreen).
+			BorderBackground(ColorSurface0).
+			Background(ColorGreen).
+			Foreground(ColorBase).
+			Bold(true).
+			Padding(0, 3).
+			Render("✔  GUARDAR (Enter)")
+
+		centeredSave := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Background(ColorSurface0).Render(saveBtn)
+
+		body := fmt.Sprintf("%s\n\n%s\n%s\n\n%s\n\n%s", header, keyBox, epBox, statusInfo, centeredSave)
+		return StyleModal.Width(modalWidth).Render(body)
+
+	case configViewCustomModel:
+		escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+		headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0).Render("Modelo personalizado")
+		spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
+		header := lipgloss.NewStyle().Background(ColorSurface0).Render(headerLeft + strings.Repeat(" ", spLen) + escBadge)
+
+		inputBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorMauve).
+			BorderBackground(ColorSurface0).
+			Background(ColorSurface0).
+			Padding(0, 1).
+			Width(innerW - 4).
+			Render(m.customModelInput.View())
+
+		saveBtn := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorGreen).
+			BorderBackground(ColorSurface0).
+			Background(ColorGreen).
+			Foreground(ColorBase).
+			Bold(true).
+			Padding(0, 3).
+			Render("✔  ACTIVAR (Enter)")
+
+		centeredSave := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Background(ColorSurface0).Render(saveBtn)
+
+		body := fmt.Sprintf("%s\n\n%s\n\n%s", header, inputBox, centeredSave)
+		return StyleModal.Width(modalWidth).Render(body)
+
+	default: // configViewSelectModel (Estilo OpenCode)
+		escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+		headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorText).Background(ColorSurface0).Render("Select model")
+		spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
+		header := lipgloss.NewStyle().Background(ColorSurface0).Render(headerLeft + strings.Repeat(" ", spLen) + escBadge)
+
+		searchLine := m.modelSearchInput.View()
+
+		items := m.getFilteredModelItems()
+		var lines []string
+
+		for i, it := range items {
+			if it.isHeader {
+				headerStyle := lipgloss.NewStyle().Foreground(ColorMauve).Background(ColorSurface0).Bold(true)
+				lines = append(lines, "\n"+headerStyle.Render(it.headerTitle))
+				continue
+			}
+
+			if it.isCustom {
+				customLabel := "+ Custom Model ID..."
+				if i == m.modelListCursor {
+					customStyled := lipgloss.NewStyle().
+						Background(ColorSurface0).
+						Foreground(ColorPeach).
+						Bold(true).
+						Width(innerW).
+						Render("  " + customLabel)
+					lines = append(lines, customStyled)
+				} else {
+					lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("  "+customLabel))
+				}
+				continue
+			}
+
+			meta := domain.GetProviderMeta(it.option.Provider)
+			pCfg := m.aiConfig.Providers[it.option.Provider]
+			keyMask := pCfg.MaskedKey()
+			if !meta.RequiresKey {
+				keyMask = "Local"
+			}
+
+			badge := "  "
+			if it.isActive {
+				badge = "● "
+			}
+
+			namePart := fmt.Sprintf("%s%s", badge, it.option.DisplayName)
+			provPart := fmt.Sprintf("%s (%s)", meta.Name, keyMask)
+
+			availW := innerW - 2
+			nameW := max(12, availW-len(provPart)-2)
+			nameTrunc := truncate(namePart, nameW)
+			sp := max(1, availW-len(nameTrunc)-len(provPart))
+			rowText := fmt.Sprintf("  %s%s%s", nameTrunc, strings.Repeat(" ", sp), provPart)
+
+			if i == m.modelListCursor {
+				rowStyled := lipgloss.NewStyle().
+					Background(ColorSurface0).
+					Foreground(ColorPeach).
+					Bold(true).
+					Width(innerW).
+					Render(rowText)
+				lines = append(lines, rowStyled)
+			} else {
+				rowStyled := lipgloss.NewStyle().
+					Foreground(ColorText).
+					Background(ColorSurface0).
+					Width(innerW).
+					Render(rowText)
+				lines = append(lines, rowStyled)
+			}
+		}
+
+		listBlock := strings.Join(lines, "\n")
+		sep := lipgloss.NewStyle().Foreground(ColorSurface1).Background(ColorSurface0).Render(strings.Repeat("─", innerW))
+
+		footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(
+			"Enter: Select   Ctrl+A: Connect provider   Esc: Close",
+		)
+
+		body := fmt.Sprintf("%s\n\n%s\n\n%s\n\n%s\n%s", header, searchLine, listBlock, sep, footer)
+		return StyleModal.Width(modalWidth).Render(body)
+	}
 }
+
+
+// overlayModal superpone la caja modal centrada encima de la vista base sin descartar su contenido
+func overlayModal(bg, modal string, width, height int) string {
+	bgLines := strings.Split(bg, "\n")
+	modalLines := strings.Split(modal, "\n")
+
+	modalH := len(modalLines)
+	modalW := lipgloss.Width(modal)
+
+	for len(bgLines) < height {
+		bgLines = append(bgLines, "")
+	}
+
+	startY := (height - modalH) / 2
+	if startY < 0 {
+		startY = 0
+	}
+
+	startX := (width - modalW) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	for i := 0; i < modalH && (startY+i) < len(bgLines); i++ {
+		lineIdx := startY + i
+		origLine := bgLines[lineIdx]
+		mLine := modalLines[i]
+
+		leftPart := ansi.Cut(origLine, 0, startX)
+		leftW := ansi.StringWidth(leftPart)
+		if leftW < startX {
+			leftPart += strings.Repeat(" ", startX-leftW)
+		}
+
+		rightPart := ansi.TruncateLeft(origLine, startX+modalW, "")
+
+		bgLines[lineIdx] = leftPart + mLine + rightPart
+	}
+
+	return strings.Join(bgLines, "\n")
+}
+
 
 func (m Model) viewTable() string {
 	var b strings.Builder
@@ -670,11 +1244,11 @@ func (m Model) viewTable() string {
 			auxLines++
 		}
 		if len(filtered) > 0 && m.cursor < len(filtered) && m.isAnomalous(filtered[m.cursor]) {
-			auxLines += 3
+			auxLines += 4
 		}
-		panelHeight := max(8, m.height-auxLines)
+		panelHeight := max(6, m.height-auxLines)
 
-		// Panel Izquierdo: Lista de Flota (Master)
+		// Panel Izquierdo: Lista de Contenedores (Master)
 		var leftContent strings.Builder
 		innerLeftW := leftWidth - 4 // Ancho libre dentro de StyleCard (borde + padding)
 		maxVisibleRows := max(3, panelHeight-3)
@@ -692,9 +1266,9 @@ func (m Model) viewTable() string {
 
 		var leftHeader string
 		if total > maxVisibleRows {
-			leftHeader = fmt.Sprintf("FLOTA (%d) • %d-%d", total, start+1, end)
+			leftHeader = fmt.Sprintf("CONTENEDORES (%d) • %d-%d", total, start+1, end)
 		} else {
-			leftHeader = fmt.Sprintf("FLOTA (%d)", total)
+			leftHeader = fmt.Sprintf("CONTENEDORES (%d)", total)
 		}
 		leftContent.WriteString(StyleCardTitle.Render(leftHeader) + "\n\n")
 
@@ -780,7 +1354,9 @@ func (m Model) viewTable() string {
 				sparkBlock = fmt.Sprintf(" [%s]", cpuSpark)
 			}
 			rightContent.WriteString(fmt.Sprintf("  CPU: %5.1f%% %s%s %s\n", sel.CPUPercent, cpuBar, sparkBlock, trendStyled))
-			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("       (Mín: %s | Máx: %s)", cpuMinStr, cpuMaxStr)) + "\n\n")
+			if panelHeight >= 12 {
+				rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("       (Mín: %s | Máx: %s)", cpuMinStr, cpuMaxStr)) + "\n")
+			}
 
 			// RAM
 			ramMB := float64(sel.RAMBytes) / (1024 * 1024)
@@ -795,7 +1371,7 @@ func (m Model) viewTable() string {
 					peakMB = math.Max(ramMB, hist.PeakRAM())
 				}
 				ramBar := RenderGradientBar(ramMB, peakMB, 12)
-				rightContent.WriteString(fmt.Sprintf("  RAM: %6.1f MB %s (Pico: %.1f MB, Sin límite Docker)\n", ramMB, ramBar, peakMB))
+				rightContent.WriteString(fmt.Sprintf("  RAM: %6.1f MB %s (Sin límite Docker)\n", ramMB, ramBar))
 			}
 
 			// Egress / Red
@@ -837,12 +1413,17 @@ func (m Model) viewTable() string {
 			diag, cached := m.diagnosisCache[selected.ID]
 			if !cached {
 				if m.triagePending[selected.ID] {
-					diag = "Analizando contenedor con OpenRouter..."
+					diag = "Analizando causa raíz con IA..."
 				} else {
 					diag = "Pendiente de diagnóstico analítico..."
 				}
 			}
-			bannerContent := fmt.Sprintf("%s %s", StyleAIOpsTag.Render("[AIOps]"), diag)
+			usage, hasUsage := m.lastDiagnosisUsage[selected.ID]
+			usageBadge := ""
+			if hasUsage && usage.TotalTokens > 0 {
+				usageBadge = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [%d tok • ~$%.4f]", usage.TotalTokens, usage.EstimatedCostUSD))
+			}
+			bannerContent := fmt.Sprintf("%s %s%s", StyleAIOpsTag.Render("[AIOps]"), diag, usageBadge)
 			b.WriteString("\n" + StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
 		}
 	}
@@ -858,7 +1439,11 @@ func (m Model) viewTable() string {
 			if m.filterValue != "" {
 				filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
 			}
-			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [c]: Clave IA  |  [/]: Filtro%s", filterTag)
+			aiStatsTag := ""
+			if m.sessionTokensUsed > 0 {
+				aiStatsTag = fmt.Sprintf("  |  󰚩 %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
+			}
+			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [c]: Modelo IA  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
 			b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 		}
 	}
@@ -943,29 +1528,55 @@ func (m Model) viewLogs() string {
 }
 
 func (m Model) viewHelp() string {
-	var b strings.Builder
+	modalWidth := 72
+	if m.width > 20 && m.width-4 < modalWidth {
+		modalWidth = m.width - 4
+	}
+	innerW := modalWidth - 6
 
-	b.WriteString(StyleModalTitle.Render("  SOLV SERVER TRACKER :: GUIA DE COMANDOS  ") + "\n\n")
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render("Atajos de teclado")
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
+	header := lipgloss.NewStyle().Background(ColorSurface0).Render(headerLeft + strings.Repeat(" ", spLen) + escBadge)
 
-	b.WriteString("  NAVEGACION:\n")
-	b.WriteString("    j / Down / ScrollDown : Mover cursor hacia abajo (actualiza detalle vivo)\n")
-	b.WriteString("    k / Up / ScrollUp     : Mover cursor hacia arriba (actualiza detalle vivo)\n")
-	b.WriteString("    /                     : Abrir filtro interactivo en tiempo real\n")
-	b.WriteString("    l / Enter             : Abrir visor de logs en vivo a pantalla completa\n")
-	b.WriteString("    e                     : Abrir shell interactiva en contenedor (/bin/sh)\n\n")
-	b.WriteString("  REMEDIACION EN CALIENTE (Cero RCE):\n")
-	b.WriteString("    r                     : Reiniciar contenedor seleccionado (restart)\n")
-	b.WriteString("    s                     : Detener contenedor seleccionado (stop)\n")
-	b.WriteString("    x                     : Aislar contenedor de la red (isolate_network)\n\n")
-	b.WriteString("  CONFIGURACION Y SEGURIDAD:\n")
-	b.WriteString("    c                     : Configurar API Key de OpenRouter cifrada en reposo (AES-256-GCM)\n\n")
-	b.WriteString("  SISTEMA:\n")
-	b.WriteString("    Esc / h               : Cerrar visor / cancelar filtro o remediación\n")
-	b.WriteString("    ?                     : Mostrar / ocultar esta ayuda\n")
-	b.WriteString("    q / Ctrl+C            : Salir de la aplicación\n\n")
-	b.WriteString(StyleStatusBar.Render("Presiona Esc para volver a la tabla de contenedores."))
+	colW := (innerW - 4) / 2
+	sectionTitle := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0)
+	keyStyle := lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
 
-	return b.String()
+	// Columna Izquierda: Navegación & Modelos
+	var leftCol strings.Builder
+	leftCol.WriteString(sectionTitle.Render("Navegación") + "\n")
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("↑ / k"), descStyle.Render("Subir")))
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("↓ / j"), descStyle.Render("Bajar")))
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("Enter / l"), descStyle.Render("Ver logs")))
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n\n", keyStyle.Render("/"), descStyle.Render("Buscar / Filtrar")))
+
+	leftCol.WriteString(sectionTitle.Render("Modelos de IA") + "\n")
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("c"), descStyle.Render("Elegir modelo")))
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("Ctrl+A"), descStyle.Render("Configurar API Key")))
+
+	// Columna Derecha: Acciones & General
+	var rightCol strings.Builder
+	rightCol.WriteString(sectionTitle.Render("Acciones") + "\n")
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("r"), descStyle.Render("Reiniciar")))
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("s"), descStyle.Render("Detener")))
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("x"), descStyle.Render("Aislar de red")))
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n\n", keyStyle.Render("e"), descStyle.Render("Abrir terminal")))
+
+	rightCol.WriteString(sectionTitle.Render("General") + "\n")
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("?"), descStyle.Render("Ver esta ayuda")))
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("q / Esc"), descStyle.Render("Cerrar / Salir")))
+
+	leftBlock := lipgloss.NewStyle().Width(colW).Background(ColorSurface0).Render(leftCol.String())
+	rightBlock := lipgloss.NewStyle().Width(colW).Background(ColorSurface0).Render(rightCol.String())
+	sep := lipgloss.NewStyle().Background(ColorSurface0).Render("    ")
+
+	columnsRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, sep, rightBlock)
+	centeredColumns := lipgloss.NewStyle().Width(innerW).Background(ColorSurface0).Render(columnsRow)
+
+	body := fmt.Sprintf("%s\n\n%s", header, centeredColumns)
+	return StyleModal.Width(modalWidth).Render(body)
 }
 
 func truncate(s string, maxLen int) string {
