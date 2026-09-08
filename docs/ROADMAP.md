@@ -78,9 +78,16 @@ Construir una plataforma de **Observabilidad Activa, ChatOps y AIOps** para infr
 - [x] Renderizado dinámico de sparklines con caracteres Unicode (` ▂▃▅▆▇█`) en columna condicional `TREND` para terminales anchas (>= 105 cols).
 - [x] Panel de tendencias temporales extendidas de CPU y RAM en el encabezado de detalle/logs (`viewLogs()`).
 
+### Fase 8: TUI Split-Pane Workspace y Espacio de Trabajo Interactivo
+- [ ] Rediseño a layout Split-Pane (panel izquierdo de flota navegable 30% | panel derecho de ficha técnica en tiempo real 70%).
+- [ ] Catálogo de logotipos ASCII monocromáticos en Catppuccin Mocha (`postgres`, `redis`, `traefik`, `nginx`, `node`, `python`, `docker`).
+- [ ] Salto interactivo a la Shell del contenedor localmente (`e` -> `tea.ExecProcess` con `/bin/sh` o `/bin/bash` nativo).
+- [ ] Modal de configuración In-TUI (`c`) para ingresar la clave de OpenRouter con máscara de contraseña y persistencia cifrada en `~/.solv/vault.enc`.
+- [ ] Mini-visor reactivo de logs en vivo en el panel derecho sin salir de la vista principal.
 
-### Fase 8: Distribución, Script de Instalación y Release v1.0.0
+### Fase 9: Distribución, Script de Instalación y Release v1.0.0
 - [ ] Script de onboarding de un solo comando (`curl -sSL https://... | sh`).
 - [ ] Pipeline de CI para compilar binarios multi-arquitectura (`linux/amd64`, `linux/arm64`) en cada tag de versión.
 - [ ] Documentación técnica de despliegue en producción.
+
 
