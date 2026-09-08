@@ -2,8 +2,9 @@
 
 ## 1. Comportamiento del Layout Split-Pane
 - La TUI debe presentar una división horizontal en dos paneles cuando el ancho de terminal sea $\ge 80$ columnas:
-  - **Panel de Flota (Izquierdo):** Ocupa entre el 25% y 30% del ancho. Lista compacta de contenedores con foco navegable mediante cursor.
-  - **Panel de Detalle (Derecho):** Ocupa el espacio restante (70-75%). Renderiza de forma instantánea la ficha del contenedor en foco sin exigir presionar `Enter`.
+  - **Panel de Flota (Izquierdo):** Ancho dedicado de 36 a 40 columnas. Lista compacta de contenedores sin wrap de texto, con indicador de foco, glifo de estado, icono tipográfico Nerd Font, nombre y porcentaje de CPU.
+  - **Paginación Vertical:** La lista debe implementar ventana deslizante según la altura de la terminal para evitar scroll forzado del buffer.
+  - **Panel de Detalle (Derecho):** Ocupa el espacio restante horizontalmente. Renderiza de forma instantánea la ficha del contenedor en foco sin exigir presionar `Enter`.
 - Si el ancho de terminal es $< 80$ columnas, el layout debe colapsar ordenadamente a una vista tabular simple de una sola columna para preservar legibilidad.
 
 ## 2. Salto a Shell Local

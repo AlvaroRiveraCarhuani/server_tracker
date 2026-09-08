@@ -17,6 +17,8 @@ type CollectorPort interface {
 type VaultPort interface {
 	Save(serverURL, secretToken string) error
 	Get() (serverURL string, secretToken string, err error)
+	SaveOpenRouterKey(key string) error
+	GetOpenRouterKey() (string, error)
 }
 
 // BufferPort define el buffer circular en memoria para retención de telemetría.

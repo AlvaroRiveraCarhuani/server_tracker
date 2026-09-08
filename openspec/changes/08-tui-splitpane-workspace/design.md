@@ -5,47 +5,47 @@
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │ SOLV SERVER TRACKER :: OPERATOR WORKSPACE                              Host: prod-01   │
-├──────────────────────────────┬─────────────────────────────────────────────────────────┤
-│ [FLOTA DE CONTENEDORES]      │ [FICHA DE INSPECCIÓN ACTIVA]                            │
-│                              │                                                         │
-│ > [OK] solv_api     12% [■░] │ solv_api (solv/api:v1.2)           [ LOGO ASCII ]       │
-│   [OK] solv_db      24% [■■] │ ID: b7e1b91191f1 | Uptime: 4d 12h  [  PostgreSQL]       │
-│   [--] redis_cache   0% [░░] ├─────────────────────────────────────────────────────────┤
-│   [!!] payment_svc   0% [░░] │ METRICAS EN TIEMPO REAL:                                │
-│                              │  CPU:  12.5% [ ▂▃▅█] ▲ +2.1%/s  (Min: 0.5% | Max: 32%)  │
-│                              │  RAM: 256MB / 1024MB [████░░░░░░░░] 25.0%               │
-│                              │  NET: 12.4 KB/s [Normal]                                │
-│                              ├─────────────────────────────────────────────────────────┤
-│                              │ REGISTROS EN VIVO (Tail 8):                             │
-│                              │  2026-09-07 20:50:11 [INFO] Worker pool initialized     │
-│                              │  2026-09-07 20:50:12 [INFO] Listening on :8080          │
-│                              │  2026-09-07 20:51:00 [INFO] Healthcheck OK              │
-├──────────────────────────────┴─────────────────────────────────────────────────────────┤
-│ [AIOps]: Triaje pasivo de incidentes contextual en 1 línea                             │
+├──────────────────────────────────────┬─────────────────────────────────────────────────┤
+│ FLOTA (4)                            │ [󱤓 POSTGRESQL]  solv_db  [RUNNING]              │
+│                                      │ Imagen: postgres:16-alpine | ID: b7e1b91191f1   │
+│ > [OK] 󰡨 solv_api           12%     ├─────────────────────────────────────────────────┤
+│   [OK] 󱤓 solv_db             4%     │ METRICAS EN TIEMPO REAL:                        │
+│   [--]  redis_cache         0%     │   CPU:  12.5% [████░░░░░░] [ ▂▃▅] ▲ +2.1%/s     │
+│   [!!] 󱡠 traefik_gw         85%     │   RAM: 256 MB / 1024 MB [████░░░░░░░░] 25.0%    │
+│                                      │   RED: Salida: 12.4 KB/s                        │
+│                                      │                                                 │
+│                                      │ ACCIONES DISPONIBLES:                           │
+│                                      │   [l/Enter] Logs en vivo  •  [e] Shell          │
+├──────────────────────────────────────┴─────────────────────────────────────────────────┤
+│ [AIOps] Diagnóstico en tiempo real: saturación de memoria por working set alto.        │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
-│ [j/k]: Navegar | [e]: Shell | [r]: Restart | [s]: Stop | [c]: Config API | [/]: Filtro │
+│ [j/k]: Navegar | [e]: Shell | [r]: Restart | [s]: Stop | [c]: Clave IA | [/]: Filtro   │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Cálculo de Dimensiones Adaptativas
-- `leftWidth = max(26, int(float64(m.width) * 0.28))`
-- `rightWidth = max(40, m.width - leftWidth - 6)`
+### Cálculo de Dimensiones y Paginación
+- `leftWidth = min(40, max(36, int(float64(m.width) * 0.32)))`
+- `rightWidth = max(40, m.width - leftWidth - 3)`
+- Ancho interno útil de la lista izquierda: `leftWidth - 4` caracteres fijos (garantía anti-wrap).
+- Paginación vertical en ventana deslizante centrada en el cursor para no exceder la altura de la terminal ni provocar scrolling no deseado.
 - Si la terminal es muy angosta (`m.width < 80`), la TUI conmuta automáticamente a la lista tabular tradicional colapsada.
 
 ---
 
-## 2. Detección y Renderizado de Logotipos ASCII
+## 2. Detección y Renderizado de Badges Tipográficas y Nerd Fonts
 
-Se implementa el submódulo `agent/internal/delivery/tui/ascii_logos.go` con arte ASCII compacto (máximo 5 líneas de alto x 18 caracteres de ancho) para las tecnologías más comunes:
-- `postgres` (elefante estilizado)
-- `redis` (bloques apilados)
-- `nginx` (glifos simétricos)
-- `traefik` (puente/gateway)
-- `node` / `javascript` (hexágono)
-- `golang` (mascota/gopher minimalista)
-- `python` (serpientes cruzadas)
-- `docker` (ballena con contenedores)
-- Fallback para imágenes genéricas.
+Se implementa el submódulo `agent/internal/delivery/tui/ascii_logos.go` con `TechnologyRegistry` y soporte para glifos vectoriales Nerd Font con paleta Catppuccin Mocha:
+- `postgresql`: `󱤓` (ColorBlue)
+- `docker`: `󰡨` (ColorBlue)
+- `redis`: `` (ColorRed)
+- `nginx`: `` (ColorGreen)
+- `traefik`: `󱡠` (ColorTeal)
+- `mysql`: `` (ColorPeach)
+- `mongodb`: `` (ColorGreen)
+- `node`: `` (ColorGreen)
+- `python`: `` (ColorYellow)
+- `golang`: `󰟓` (ColorTeal)
+- Fallback para imágenes genéricas: `󰡨` (ColorLavender).
 
 ---
 

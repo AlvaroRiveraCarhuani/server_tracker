@@ -27,7 +27,11 @@ type TriageClient struct {
 
 // NewTriageClient inicializa el cliente con credenciales del entorno.
 func NewTriageClient() *TriageClient {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	return NewTriageClientWithKey(os.Getenv("OPENROUTER_API_KEY"))
+}
+
+// NewTriageClientWithKey inicializa el cliente con una clave explícita.
+func NewTriageClientWithKey(apiKey string) *TriageClient {
 	model := os.Getenv("OPENROUTER_MODEL")
 	if model == "" {
 		model = defaultModel
@@ -39,6 +43,11 @@ func NewTriageClient() *TriageClient {
 		baseURL: defaultOpenRouterURL,
 		client:  &http.Client{Timeout: 6 * time.Second},
 	}
+}
+
+// SetAPIKey actualiza la clave en caliente sin reiniciar el proceso.
+func (c *TriageClient) SetAPIKey(apiKey string) {
+	c.apiKey = apiKey
 }
 
 // DiagnoseContainer analiza logs y estado para generar una causa raíz en 1 sola línea.

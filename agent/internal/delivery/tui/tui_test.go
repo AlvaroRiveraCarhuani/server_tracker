@@ -329,10 +329,10 @@ func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
 		t.Errorf("expected 2 samples for c-1, got %d", len(m.metricsHistory["c-1"].CPU))
 	}
 
-	// Renderizar tabla principal: debe contener encabezado de métricas
+	// Renderizar tabla principal: debe contener ficha técnica de métricas en tiempo real
 	rendered := m.View()
-	if !strings.Contains(rendered, "CPU %") || !strings.Contains(rendered, "RAM (MB)") {
-		t.Errorf("expected view to contain CPU %% and RAM (MB) column headers, got:\n%s", rendered)
+	if !strings.Contains(rendered, "METRICAS EN TIEMPO REAL:") || !strings.Contains(rendered, "CPU:") || !strings.Contains(rendered, "RAM:") {
+		t.Errorf("expected view to contain realtime metrics in split-pane, got:\n%s", rendered)
 	}
 
 	// Renderizar vista de logs para c-1: debe contener la sección de tendencias con métricas btop
@@ -343,6 +343,138 @@ func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
 	renderedLogs := m.View()
 	if !strings.Contains(renderedLogs, "CPU:") || !strings.Contains(renderedLogs, "RAM:") {
 		t.Errorf("expected viewLogs to contain CPU and RAM btop-style trends, got:\n%s", renderedLogs)
+	}
+}
+
+type mockVaultForTUI struct {
+	savedURL   string
+	savedToken string
+	savedKey   string
+}
+
+func (m *mockVaultForTUI) Save(serverURL, secretToken string) error {
+	m.savedURL = serverURL
+	m.savedToken = secretToken
+	return nil
+}
+
+func (m *mockVaultForTUI) Get() (string, string, error) {
+	return m.savedURL, m.savedToken, nil
+}
+
+func (m *mockVaultForTUI) SaveOpenRouterKey(key string) error {
+	m.savedKey = key
+	return nil
+}
+
+func (m *mockVaultForTUI) GetOpenRouterKey() (string, error) {
+	return m.savedKey, nil
+}
+
+func TestTUI_ConfigModalWorkflow(t *testing.T) {
+	collector := &mockCollectorForTUI{metrics: sampleMetrics()}
+	vaultMock := &mockVaultForTUI{}
+	model := NewModel(collector, vaultMock)
+	model.metrics = sampleMetrics()
+
+	// 1. Abrir modal con 'c'
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m := newModel.(Model)
+	if m.activeState != stateConfigModal {
+		t.Fatalf("expected activeState to be stateConfigModal, got %v", m.activeState)
+	}
+
+	// 2. Renderizar vista del modal
+	renderedModal := m.View()
+	if !strings.Contains(renderedModal, "CONFIGURACION SEGURA") || !strings.Contains(renderedModal, "Blindaje D2") {
+		t.Errorf("expected view to contain modal header and D2 shield, got:\n%s", renderedModal)
+	}
+
+	// 3. Escribir texto en el input
+	for _, r := range "sk-or-v1-testkey123" {
+		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = newModel.(Model)
+	}
+
+	// 4. Presionar Enter para guardar
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+
+	if m.activeState != stateFleetTable {
+		t.Errorf("expected state to return to stateFleetTable after Enter, got %v", m.activeState)
+	}
+	if vaultMock.savedKey != "sk-or-v1-testkey123" {
+		t.Errorf("expected vault to store key, got %s", vaultMock.savedKey)
+	}
+	if !strings.Contains(m.statusMessage, "[OK]") {
+		t.Errorf("expected statusMessage to indicate success, got %s", m.statusMessage)
+	}
+}
+
+func TestTUI_ShellAttachBehavior(t *testing.T) {
+	metrics := []domain.ContainerMetric{
+		{ID: "c-1", Name: "running_app", Status: "running"},
+		{ID: "c-2", Name: "stopped_app", Status: "exited"},
+	}
+	collector := &mockCollectorForTUI{metrics: metrics}
+	model := NewModel(collector)
+	model.metrics = metrics
+
+	// 1. Sobre contenedor activo (row 0), presionar 'e' debe generar tea.Cmd para invocar shell
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if cmd == nil {
+		t.Errorf("expected tea.Cmd to execute shell on running container, got nil")
+	}
+	m := newModel.(Model)
+
+	// 2. Mover cursor a contenedor detenido (row 1: stopped_app)
+	m.cursor = 1
+	newModel2, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if cmd2 != nil {
+		t.Errorf("expected nil cmd when trying to attach shell to exited container, got %v", cmd2)
+	}
+	m2 := newModel2.(Model)
+	if !strings.Contains(m2.statusMessage, "no está activo") {
+		t.Errorf("expected warning message about stopped container, got %s", m2.statusMessage)
+	}
+
+	// 3. Recibir mensaje shellFinishedMsg -> debe limpiar pantalla y notificar
+	newModel3, finishCmd := m.Update(shellFinishedMsg{err: nil})
+	m3 := newModel3.(Model)
+	if !strings.Contains(m3.statusMessage, "finalizada") {
+		t.Errorf("expected statusMessage after shell finish, got %s", m3.statusMessage)
+	}
+	if finishCmd == nil {
+		t.Errorf("expected tea.ClearScreen command after shell finish, got nil")
+	}
+}
+
+func TestTUI_RenderLayoutSnapshot(t *testing.T) {
+	metrics := []domain.ContainerMetric{
+		{ID: "c-1", Name: "gallant_moore", Status: "exited", CPUPercent: 0.0, Image: "postgres:16-alpine"},
+		{ID: "c-2", Name: "reverent_williams", Status: "exited", CPUPercent: 0.0, Image: "redis:7"},
+		{ID: "c-3", Name: "eager_leakey", Status: "exited", CPUPercent: 0.0, Image: "nginx:latest"},
+		{ID: "c-4", Name: "bold_panini", Status: "running", CPUPercent: 0.0, Image: "node:20-alpine"},
+		{ID: "c-5", Name: "solv-lab-707a8a1c-db", Status: "exited", CPUPercent: 0.0, Image: "postgres:16"},
+		{ID: "c-6", Name: "solv-lab-3bd76085-api", Status: "exited", CPUPercent: 0.0, Image: "solv/api"},
+		{ID: "c-7", Name: "solv-lab-86e98f79-gw", Status: "exited", CPUPercent: 0.0, Image: "traefik:v3"},
+	}
+	collector := &mockCollectorForTUI{metrics: metrics}
+	model := NewModel(collector)
+	model.metrics = metrics
+	model.width = 96
+	model.height = 24
+	model.cursor = 3 // bold_panini
+
+	rendered := model.View()
+	t.Logf("RENDERED SNAPSHOT:\n%s\n", rendered)
+
+	// Verificar que cada fila no tenga saltos de línea partidos
+	if strings.Contains(rendered, "> [-\n") || strings.Contains(rendered, "[--\n") {
+		t.Errorf("line broken by unwanted wrap:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "bold_panini") {
+		t.Errorf("expected bold_panini in rendered view")
 	}
 }
 

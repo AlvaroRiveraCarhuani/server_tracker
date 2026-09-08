@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
+	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,6 +27,7 @@ const (
 	stateLogViewer
 	stateFiltering
 	stateConfirmRemediation
+	stateConfigModal
 	stateHelp
 )
 
@@ -45,6 +50,10 @@ type diagnosisResultMsg struct {
 	diagnosis   string
 }
 
+type shellFinishedMsg struct {
+	err error
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
@@ -59,6 +68,7 @@ type TriageService interface {
 // Model representa el estado global de la TUI interactiva.
 type Model struct {
 	collector        ports.CollectorPort
+	vaultService     ports.VaultPort
 	triageClient     TriageService
 	diagnosisCache   map[string]string
 	triagePending    map[string]bool
@@ -67,6 +77,7 @@ type Model struct {
 	cursor           int
 	activeState      sessionState
 	filterInput      textinput.Model
+	apiKeyInput      textinput.Model
 	filterValue      string
 	viewport         viewport.Model
 	selectedName     string
@@ -83,25 +94,57 @@ type Model struct {
 	height           int
 }
 
-// NewModel inicializa el modelo de la TUI.
-func NewModel(collector ports.CollectorPort) Model {
+// NewModel inicializa el modelo de la TUI con soporte de bóveda para AIOps.
+func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	ti := textinput.New()
 	ti.Placeholder = "filtrar por nombre o imagen..."
 	ti.Prompt = "/ "
 	ti.PromptStyle = StyleFilterPrompt
 
+	ki := textinput.New()
+	ki.Placeholder = "sk-or-v1-..."
+	ki.Prompt = "Clave API: "
+	ki.PromptStyle = StyleFilterPrompt
+	ki.EchoMode = textinput.EchoPassword
+	ki.EchoCharacter = '•'
+
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
 
+	var vaultSvc ports.VaultPort
+	if len(v) > 0 && v[0] != nil {
+		vaultSvc = v[0]
+	} else {
+		homeDir, _ := os.UserHomeDir()
+		vaultPath := filepath.Join(homeDir, ".solv", "vault.enc")
+		passphrase := os.Getenv("SOLV_VAULT_PASSPHRASE")
+		if passphrase == "" {
+			passphrase = "solv_default_host_entropy"
+		}
+		vaultSvc = vault.NewCascadeVault(vaultPath, passphrase)
+	}
+
+	var triageClient TriageService
+	if vaultSvc != nil {
+		if key, err := vaultSvc.GetOpenRouterKey(); err == nil && key != "" {
+			triageClient = ai.NewTriageClientWithKey(key)
+		}
+	}
+	if triageClient == nil {
+		triageClient = ai.NewTriageClient()
+	}
+
 	return Model{
 		collector:      collector,
-		triageClient:   ai.NewTriageClient(),
+		vaultService:   vaultSvc,
+		triageClient:   triageClient,
 		diagnosisCache: make(map[string]string),
 		triagePending:  make(map[string]bool),
 		metricsHistory: make(map[string]*MetricHistory),
 		cursor:         0,
 		activeState:    stateFleetTable,
 		filterInput:    ti,
+		apiKeyInput:    ki,
 		viewport:       vp,
 		lastSync:       time.Now(),
 		width:          100,
@@ -321,6 +364,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeState = stateFleetTable
 			}
 
+		case stateConfigModal:
+			switch msg.String() {
+			case "esc":
+				m.apiKeyInput.Blur()
+				m.activeState = stateFleetTable
+				return m, nil
+			case "enter":
+				val := strings.TrimSpace(m.apiKeyInput.Value())
+				if val != "" {
+					if m.vaultService != nil {
+						if err := m.vaultService.SaveOpenRouterKey(val); err != nil {
+							m.statusMessage = fmt.Sprintf("[!!] Error guardando clave en bóveda: %v", err)
+						} else {
+							m.statusMessage = "[OK] Clave de OpenRouter cifrada en bóveda local (AES-256-GCM)"
+						}
+					} else {
+						m.statusMessage = "[OK] Clave de OpenRouter configurada en memoria"
+					}
+					m.triageClient = ai.NewTriageClientWithKey(val)
+					m.diagnosisCache = make(map[string]string)
+					m.statusExpiry = time.Now().Add(5 * time.Second)
+				}
+				m.apiKeyInput.Blur()
+				m.activeState = stateFleetTable
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
+				return m, cmd
+			}
+
 		case stateFleetTable:
 			filtered := m.filteredMetrics()
 			switch msg.String() {
@@ -354,6 +428,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.viewport.SetContent("Cargando logs de Docker...")
 					return m, m.fetchLogs(c.ID, c.Name)
 				}
+			case "e":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					c := filtered[m.cursor]
+					if strings.ToLower(c.Status) != "running" {
+						m.statusMessage = fmt.Sprintf("[!!] No se puede abrir shell: '%s' no está activo (%s)", c.Name, c.Status)
+						m.statusExpiry = time.Now().Add(4 * time.Second)
+						return m, nil
+					}
+					shellCmd := exec.Command("docker", "exec", "-it", c.ID, "/bin/sh")
+					return m, tea.ExecProcess(shellCmd, func(err error) tea.Msg {
+						return shellFinishedMsg{err: err}
+					})
+				}
+			case "c":
+				m.activeState = stateConfigModal
+				m.apiKeyInput.Reset()
+				m.apiKeyInput.Focus()
+				return m, textinput.Blink
 			case "r":
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.pendingContainer = filtered[m.cursor]
@@ -379,6 +471,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeState = stateHelp
 			}
 		}
+
+	case shellFinishedMsg:
+		if msg.err != nil {
+			m.statusMessage = fmt.Sprintf("[!!] Shell finalizada con error: %v", msg.err)
+		} else {
+			m.statusMessage = "[OK] Sesión de shell interactiva finalizada"
+		}
+		m.statusExpiry = time.Now().Add(4 * time.Second)
+		return m, tea.ClearScreen
 
 	case tickMsg:
 		if !m.statusExpiry.IsZero() && time.Now().After(m.statusExpiry) {
@@ -457,26 +558,18 @@ func (m Model) View() string {
 	if m.activeState == stateConfirmRemediation {
 		return m.viewConfirmModal()
 	}
-
-	content := ""
-	switch m.activeState {
-	case stateLogViewer:
-		content = m.viewLogs()
-	case stateHelp:
-		content = m.viewHelp()
-	default:
-		content = m.viewTable()
+	if m.activeState == stateConfigModal {
+		return m.viewConfigModal()
 	}
 
-	// Expandir el contenedor a todo el ancho y alto disponible de la terminal
-	cardStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorSurface1).
-		Padding(0, 1).
-		Width(max(60, m.width-4)).
-		Height(max(10, m.height-2))
-
-	return cardStyle.Render(content)
+	switch m.activeState {
+	case stateLogViewer:
+		return m.viewLogs()
+	case stateHelp:
+		return m.viewHelp()
+	default:
+		return m.viewTable()
+	}
 }
 
 func (m Model) viewConfirmModal() string {
@@ -516,75 +609,224 @@ func (m Model) viewConfirmModal() string {
 	)
 }
 
+func (m Model) viewConfigModal() string {
+	title := StyleModalTitle.Render("  CONFIGURACION SEGURA: MOTOR AIOps  ")
+
+	desc := lipgloss.NewStyle().Foreground(ColorText).Render(
+		"Ingrese su API Key de OpenRouter para activar el\ndiagnóstico Zero-Prompt en tiempo real.\n\n" +
+			lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Blindaje D2: La clave se almacena cifrada en disco con\nAES-256-GCM y derivación de clave Argon2id (~/.solv/vault.enc)."),
+	)
+
+	inputBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorMauve).
+		Padding(0, 1).
+		Width(52).
+		Render(m.apiKeyInput.View())
+
+	help := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
+		"[Enter] Guardar Cifrado    [Esc] Cancelar",
+	)
+
+	body := fmt.Sprintf("%s\n\n%s\n\n%s\n\n%s", title, desc, inputBox, help)
+	modalWidth := 58
+	if m.width > 20 && m.width-10 < modalWidth {
+		modalWidth = m.width - 10
+	}
+	modal := StyleModal.Width(modalWidth).Render(body)
+
+	return lipgloss.Place(
+		max(60, m.width-4),
+		max(10, m.height-2),
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+	)
+}
+
 func (m Model) viewTable() string {
 	var b strings.Builder
 
-	// Header superior
-	b.WriteString(StyleTitle.Render("SOLV SERVER TRACKER :: DATA PLANE"))
-	b.WriteString("\n")
+	// Header superior con Branding de SOLV
+	branding := StyleSolvBranding.Render("SOLV") + lipgloss.NewStyle().Foreground(ColorSubtext0).Render(" :: OPERATOR WORKSPACE")
+	b.WriteString(branding + "\n")
 
 	if m.lastError != "" {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorRed).Render(fmt.Sprintf("[ERROR] %s\n", m.lastError)))
 	}
 
-	// Ancho dinámico para las columnas
-	hasCPUMeter := m.width >= 95
-	cpuColWidth := 10
-	if hasCPUMeter {
-		cpuColWidth = 14
-	}
-	fixedColsWidth := 14 + 18 + cpuColWidth + 12 + 16 + 6 // ID + STATUS + CPU + RAM + EGRESS + márgenes
-	nameColWidth := max(22, m.width-fixedColsWidth-8)
-
-	// Encabezado de columnas
-	headers := fmt.Sprintf("  %-14s %-*s %-18s %-*s %-12s %16s",
-		"ID", nameColWidth, "CONTAINER", "STATUS", cpuColWidth, "CPU %", "RAM (MB)", "EGRESS")
-	b.WriteString(StyleHeader.Render(headers))
-	b.WriteString("\n")
-
 	filtered := m.filteredMetrics()
-	if len(filtered) == 0 {
-		if m.filterValue != "" {
-			b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  No se encontraron contenedores que coincidan con '%s'\n", m.filterValue)))
-		} else {
-			b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  Escaneando socket /var/run/docker.sock...\n"))
+
+	// Si la terminal tiene ancho suficiente (>= 80), renderizamos el Split-Pane
+	if m.width >= 80 {
+		leftWidth := 38
+		if m.width > 120 {
+			leftWidth = min(42, int(float64(m.width)*0.32))
 		}
-	} else {
-		for i, c := range filtered {
-			glyph, statusText, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
-			statusCell := fmt.Sprintf("%-4s %-10s", glyph, statusText)
-			statusStyled := statusStyle.Render(statusCell)
+		rightWidth := max(38, m.width-leftWidth-2)
 
-			ramMB := float64(c.RAMBytes) / (1024 * 1024)
-			egressStr, egressStyle := FormatEgress(c.EgressBytesSec)
+		auxLines := 4
+		if m.lastError != "" {
+			auxLines++
+		}
+		if len(filtered) > 0 && m.cursor < len(filtered) && m.isAnomalous(filtered[m.cursor]) {
+			auxLines += 3
+		}
+		panelHeight := max(8, m.height-auxLines)
 
-			colID := fmt.Sprintf("%-14s", c.ID)
-			colName := fmt.Sprintf("%-*s", nameColWidth, truncate(c.Name, nameColWidth-2))
+		// Panel Izquierdo: Lista de Flota (Master)
+		var leftContent strings.Builder
+		innerLeftW := leftWidth - 4 // Ancho libre dentro de StyleCard (borde + padding)
+		maxVisibleRows := max(3, panelHeight-3)
 
-			var colCPU string
-			if hasCPUMeter {
-				colCPU = fmt.Sprintf("%-5.1f %s", c.CPUPercent, RenderGradientBar(c.CPUPercent, 100.0, 4))
+		total := len(filtered)
+		start := 0
+		if m.cursor >= maxVisibleRows {
+			start = m.cursor - maxVisibleRows + 1
+		}
+		end := start + maxVisibleRows
+		if end > total {
+			end = total
+			start = max(0, end-maxVisibleRows)
+		}
+
+		var leftHeader string
+		if total > maxVisibleRows {
+			leftHeader = fmt.Sprintf("FLOTA (%d) • %d-%d", total, start+1, end)
+		} else {
+			leftHeader = fmt.Sprintf("FLOTA (%d)", total)
+		}
+		leftContent.WriteString(StyleCardTitle.Render(leftHeader) + "\n\n")
+
+		if total == 0 {
+			if m.filterValue != "" {
+				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("Sin resultados para '%s'", m.filterValue)))
 			} else {
-				colCPU = fmt.Sprintf("%-10.1f", c.CPUPercent)
+				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Escaneando socket..."))
+			}
+		} else {
+			nameW := max(8, innerLeftW-14)
+			for i := start; i < end; i++ {
+				c := filtered[i]
+				glyph, _, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
+				tech := DetectTechnology(c.Image, c.Name)
+
+				prefix := "  "
+				if i == m.cursor {
+					prefix = "> "
+				}
+
+				nameStr := truncate(c.Name, nameW)
+				namePadded := fmt.Sprintf("%-*s", nameW, nameStr)
+				cpuStr := fmt.Sprintf("%3.0f%%", c.CPUPercent)
+
+				var cpuStyled string
+				if c.CPUPercent >= 80 {
+					cpuStyled = lipgloss.NewStyle().Foreground(ColorRed).Bold(true).Render(cpuStr)
+				} else if c.CPUPercent >= 50 {
+					cpuStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(cpuStr)
+				} else {
+					cpuStyled = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(cpuStr)
+				}
+
+				techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(tech.NerdGlyph)
+				rowLine := fmt.Sprintf("%s%s %s %s %s", prefix, statusStyle.Render(glyph), techGlyphStyled, namePadded, cpuStyled)
+
+				if i == m.cursor {
+					leftContent.WriteString(StyleRowFocus.Width(innerLeftW).Render(rowLine) + "\n")
+				} else {
+					leftContent.WriteString(lipgloss.NewStyle().Width(innerLeftW).Render(rowLine) + "\n")
+				}
+			}
+		}
+
+		leftPanel := StyleCard.Width(leftWidth).Height(panelHeight).Render(leftContent.String())
+
+		// Panel Derecho: Ficha Técnica Viva (Detail)
+		var rightContent strings.Builder
+		if len(filtered) > 0 && m.cursor < len(filtered) {
+			sel := filtered[m.cursor]
+			tech := DetectTechnology(sel.Image, sel.Name)
+			_, statusText, statusStyle := FormatStatus(sel.Status, sel.RAMBytes, sel.RAMLimitBytes)
+			statusBadge := statusStyle.Render(fmt.Sprintf("[%s]", statusText))
+
+			// Header del contenedor
+			headerLine := fmt.Sprintf("%s  %s  %s", tech.Badge(), lipgloss.NewStyle().Bold(true).Foreground(ColorText).Render(sel.Name), statusBadge)
+			rightContent.WriteString(headerLine + "\n")
+
+			subInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  Imagen: %s  |  ID: %s  |  Categoría: %s", sel.Image, sel.ID, tech.Category))
+			rightContent.WriteString(subInfo + "\n\n")
+
+			// Tarjeta Térmica de Recursos
+			rightContent.WriteString(StyleCardTitle.Render("METRICAS EN TIEMPO REAL:") + "\n")
+
+			// CPU
+			hist := m.metricsHistory[sel.ID]
+			cpuSpark := ""
+			cpuMinStr := "0.0%"
+			cpuMaxStr := "0.0%"
+			trendStyled := "≈ estable"
+			if hist != nil && len(hist.CPU) > 0 {
+				cpuSpark = RenderSparkline(hist.CPU, 0, 100, 16)
+				trend := hist.CalculateCPUTrend()
+				trendStyled = trend.Style.Render(fmt.Sprintf("%s %s", trend.Symbol, trend.Label))
+				minC, maxC := hist.CPUMinMax()
+				cpuMinStr = fmt.Sprintf("%.1f%%", minC)
+				cpuMaxStr = fmt.Sprintf("%.1f%%", maxC)
+			}
+			cpuBar := RenderGradientBar(sel.CPUPercent, 100.0, 10)
+			sparkBlock := ""
+			if cpuSpark != "" {
+				sparkBlock = fmt.Sprintf(" [%s]", cpuSpark)
+			}
+			rightContent.WriteString(fmt.Sprintf("  CPU: %5.1f%% %s%s %s\n", sel.CPUPercent, cpuBar, sparkBlock, trendStyled))
+			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("       (Mín: %s | Máx: %s)", cpuMinStr, cpuMaxStr)) + "\n\n")
+
+			// RAM
+			ramMB := float64(sel.RAMBytes) / (1024 * 1024)
+			if sel.RAMLimitBytes > 0 {
+				limitMB := float64(sel.RAMLimitBytes) / (1024 * 1024)
+				ramBar := RenderGradientBar(ramMB, limitMB, 12)
+				pct := (ramMB / limitMB) * 100.0
+				rightContent.WriteString(fmt.Sprintf("  RAM: %6.1f MB / %6.1f MB %s %5.1f%%\n", ramMB, limitMB, ramBar, pct))
+			} else {
+				peakMB := ramMB
+				if hist != nil {
+					peakMB = math.Max(ramMB, hist.PeakRAM())
+				}
+				ramBar := RenderGradientBar(ramMB, peakMB, 12)
+				rightContent.WriteString(fmt.Sprintf("  RAM: %6.1f MB %s (Pico: %.1f MB, Sin límite Docker)\n", ramMB, ramBar, peakMB))
 			}
 
-			colRAM := fmt.Sprintf("%-12.1f", ramMB)
-			colEgress := egressStyle.Render(fmt.Sprintf("%16s", egressStr))
+			// Egress / Red
+			egressStr, egressStyle := FormatEgress(sel.EgressBytesSec)
+			rightContent.WriteString(fmt.Sprintf("  RED: Salida: %s\n\n", egressStyle.Render(egressStr)))
 
+			// Sección de Acciones Rápidas
+			rightContent.WriteString(StyleCardTitle.Render("ACCIONES DISPONIBLES:") + "\n")
+			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  [l/Enter] Logs en vivo    •  [e] Shell interactiva\n  [r] Restart  •  [s] Stop  •  [x] Aislar Red\n"))
+		} else {
+			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Selecciona un contenedor de la lista izquierda."))
+		}
+
+		rightPanel := StyleCard.Width(rightWidth).Height(panelHeight).Render(rightContent.String())
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, " ", rightPanel) + "\n")
+	} else {
+		// Modo clásico colapsado para terminales angostas (< 80 cols)
+		headers := fmt.Sprintf("  %-14s %-20s %-10s", "ID", "CONTAINER", "STATUS")
+		b.WriteString(StyleHeader.Render(headers) + "\n")
+		for i, c := range filtered {
+			glyph, statusText, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
 			prefix := "  "
 			if i == m.cursor {
 				prefix = "> "
 			}
-
-			line := fmt.Sprintf("%s%s %s %s %-*s %s %s",
-				prefix, colID, colName, statusStyled, cpuColWidth, colCPU, colRAM, colEgress)
-
+			line := fmt.Sprintf("%s%-14s %-20s %s", prefix, c.ID, truncate(c.Name, 18), statusStyle.Render(fmt.Sprintf("%s %s", glyph, statusText)))
 			if i == m.cursor {
-				b.WriteString(StyleRowFocus.Render(line))
+				b.WriteString(StyleRowFocus.Render(line) + "\n")
 			} else {
-				b.WriteString(line)
+				b.WriteString(line + "\n")
 			}
-			b.WriteString("\n")
 		}
 	}
 
@@ -616,7 +858,7 @@ func (m Model) viewTable() string {
 			if m.filterValue != "" {
 				filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
 			}
-			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [/]: Filtro%s", filterTag)
+			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [c]: Clave IA  |  [/]: Filtro%s", filterTag)
 			b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 		}
 	}
@@ -646,47 +888,56 @@ func (m Model) viewLogs() string {
 	var trendLines []string
 
 	// 1. Línea de CPU con sparkline cuantitativa y aceleración
-	cpuVal := 0.0
-	if selectedMetric != nil {
-		cpuVal = selectedMetric.CPUPercent
-	}
 	if hist != nil && len(hist.CPU) > 0 {
-		spark := RenderSparkline(hist.CPU, 0, 100, 20)
+		cpuSpark := RenderSparkline(hist.CPU, 0, 100, 20)
 		trend := hist.CalculateCPUTrend()
-		minCPU, maxCPU := hist.CPUMinMax()
 		trendStyled := trend.Style.Render(fmt.Sprintf("%s %s", trend.Symbol, trend.Label))
-		trendLines = append(trendLines, fmt.Sprintf("  CPU: %5.1f%% [%s] %s  |  Mín: %.1f%%  Máx: %.1f%%", cpuVal, spark, trendStyled, minCPU, maxCPU))
-	} else {
-		trendLines = append(trendLines, fmt.Sprintf("  CPU: %5.1f%% %s", cpuVal, RenderGradientBar(cpuVal, 100.0, 14)))
+		minC, maxC := hist.CPUMinMax()
+		curCPU := hist.CPU[len(hist.CPU)-1]
+		cpuBar := RenderGradientBar(curCPU, 100.0, 12)
+		trendLines = append(trendLines, fmt.Sprintf("  CPU: %5.1f%% %s [%s] %s  (Mín: %.1f%% | Máx: %.1f%%)", curCPU, cpuBar, cpuSpark, trendStyled, minC, maxC))
+	} else if selectedMetric != nil {
+		cpuBar := RenderGradientBar(selectedMetric.CPUPercent, 100.0, 12)
+		trendLines = append(trendLines, fmt.Sprintf("  CPU: %5.1f%% %s", selectedMetric.CPUPercent, cpuBar))
 	}
 
-	// 2. Línea de RAM proporcional con gradiente térmico
-	ramBytes := uint64(0)
-	ramLimit := uint64(0)
-	if selectedMetric != nil {
-		ramBytes = selectedMetric.RAMBytes
-		ramLimit = selectedMetric.RAMLimitBytes
-	}
-	ramMB := float64(ramBytes) / (1024 * 1024)
-
-	if ramLimit > 0 {
-		limitMB := float64(ramLimit) / (1024 * 1024)
-		bar := RenderGradientBar(ramMB, limitMB, 14)
-		pct := (ramMB / limitMB) * 100.0
-		trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB / %6.1f MB %s %5.1f%%", ramMB, limitMB, bar, pct))
-	} else {
-		peakMB := ramMB
-		if hist != nil {
-			peakMB = math.Max(ramMB, hist.PeakRAM())
+	// 2. Línea de RAM con medidor térmico btop y sparkline
+	if hist != nil && len(hist.RAM) > 0 {
+		ramSpark := RenderSparkline(hist.RAM, 0, hist.PeakRAM()*1.2, 20)
+		curRAM := hist.RAM[len(hist.RAM)-1]
+		if selectedMetric != nil && selectedMetric.RAMLimitBytes > 0 {
+			limitMB := float64(selectedMetric.RAMLimitBytes) / (1024 * 1024)
+			ramBar := RenderGradientBar(curRAM, limitMB, 12)
+			pct := (curRAM / limitMB) * 100.0
+			trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB / %6.1f MB %s [%s] %5.1f%%", curRAM, limitMB, ramBar, ramSpark, pct))
+		} else {
+			peakMB := hist.PeakRAM()
+			ramBar := RenderGradientBar(curRAM, peakMB, 12)
+			trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB %s [%s] (Pico: %.1f MB, Sin límite Docker)", curRAM, ramBar, ramSpark, peakMB))
 		}
-		bar := RenderGradientBar(ramMB, peakMB, 14)
-		trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB %s (Pico: %.1f MB, Sin límite Docker)", ramMB, bar, peakMB))
+	} else if selectedMetric != nil {
+		ramMB := float64(selectedMetric.RAMBytes) / (1024 * 1024)
+		if selectedMetric.RAMLimitBytes > 0 {
+			limitMB := float64(selectedMetric.RAMLimitBytes) / (1024 * 1024)
+			ramBar := RenderGradientBar(ramMB, limitMB, 12)
+			pct := (ramMB / limitMB) * 100.0
+			trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB / %6.1f MB %s %5.1f%%", ramMB, limitMB, ramBar, pct))
+		} else {
+			ramBar := RenderGradientBar(ramMB, ramMB, 12)
+			trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB %s", ramMB, ramBar))
+		}
 	}
 
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(strings.Join(trendLines, "\n")) + "\n\n")
+	if len(trendLines) > 0 {
+		trendBox := StyleTrendsBox.Render(strings.Join(trendLines, "\n"))
+		b.WriteString(trendBox + "\n")
+	}
 
-	b.WriteString(m.viewport.View() + "\n\n")
-	b.WriteString(StyleStatusBar.Render("[j/k, Up/Down, Scroll]: Scroll  |  [g/G]: Inicio/Fin  |  [Esc/h]: Volver a Flota"))
+	// Renderizar el visor de logs scrollable
+	b.WriteString(m.viewport.View() + "\n")
+
+	helpBar := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("[Esc]: Volver a la flota  |  [Flechas / Scroll]: Desplazar registros")
+	b.WriteString(helpBar)
 
 	return b.String()
 }
@@ -694,16 +945,20 @@ func (m Model) viewLogs() string {
 func (m Model) viewHelp() string {
 	var b strings.Builder
 
-	b.WriteString(StyleTitle.Render("SOLV SERVER TRACKER :: ATAJOS DE TECLADO") + "\n\n")
+	b.WriteString(StyleModalTitle.Render("  SOLV SERVER TRACKER :: GUIA DE COMANDOS  ") + "\n\n")
+
 	b.WriteString("  NAVEGACION:\n")
-	b.WriteString("    j / Down / ScrollDown : Mover cursor hacia abajo (1 en 1)\n")
-	b.WriteString("    k / Up / ScrollUp     : Mover cursor hacia arriba (1 en 1)\n")
+	b.WriteString("    j / Down / ScrollDown : Mover cursor hacia abajo (actualiza detalle vivo)\n")
+	b.WriteString("    k / Up / ScrollUp     : Mover cursor hacia arriba (actualiza detalle vivo)\n")
 	b.WriteString("    /                     : Abrir filtro interactivo en tiempo real\n")
-	b.WriteString("    l / Enter             : Abrir visor de logs en vivo a pantalla completa\n\n")
+	b.WriteString("    l / Enter             : Abrir visor de logs en vivo a pantalla completa\n")
+	b.WriteString("    e                     : Abrir shell interactiva en contenedor (/bin/sh)\n\n")
 	b.WriteString("  REMEDIACION EN CALIENTE (Cero RCE):\n")
 	b.WriteString("    r                     : Reiniciar contenedor seleccionado (restart)\n")
 	b.WriteString("    s                     : Detener contenedor seleccionado (stop)\n")
 	b.WriteString("    x                     : Aislar contenedor de la red (isolate_network)\n\n")
+	b.WriteString("  CONFIGURACION Y SEGURIDAD:\n")
+	b.WriteString("    c                     : Configurar API Key de OpenRouter cifrada en reposo (AES-256-GCM)\n\n")
 	b.WriteString("  SISTEMA:\n")
 	b.WriteString("    Esc / h               : Cerrar visor / cancelar filtro o remediación\n")
 	b.WriteString("    ?                     : Mostrar / ocultar esta ayuda\n")
@@ -728,9 +983,9 @@ func max(a, b int) int {
 }
 
 // RunTUI inicia el programa interactivo Bubbletea con soporte de mouse.
-func RunTUI(collector ports.CollectorPort) error {
+func RunTUI(collector ports.CollectorPort, v ...ports.VaultPort) error {
 	p := tea.NewProgram(
-		NewModel(collector),
+		NewModel(collector, v...),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

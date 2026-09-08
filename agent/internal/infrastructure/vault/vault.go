@@ -28,8 +28,9 @@ var (
 )
 
 type credentialsPayload struct {
-	ServerURL   string `json:"server_url"`
-	SecretToken string `json:"secret_token"`
+	ServerURL     string `json:"server_url"`
+	SecretToken   string `json:"secret_token"`
+	OpenRouterKey string `json:"openrouter_key,omitempty"`
 }
 
 // FileVault implementa ports.VaultPort guardando credenciales cifradas con AES-256-GCM + Argon2id.
@@ -46,16 +47,13 @@ func NewFileVault(path, passphrase string) *FileVault {
 	}
 }
 
-func (v *FileVault) Save(serverURL, secretToken string) error {
+func (v *FileVault) writePayload(creds credentialsPayload) error {
 	dir := filepath.Dir(v.path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("error creando directorio para bóveda: %w", err)
 	}
 
-	payload, err := json.Marshal(credentialsPayload{
-		ServerURL:   serverURL,
-		SecretToken: secretToken,
-	})
+	payload, err := json.Marshal(creds)
 	if err != nil {
 		return fmt.Errorf("error serializando credenciales: %w", err)
 	}
@@ -93,15 +91,16 @@ func (v *FileVault) Save(serverURL, secretToken string) error {
 	return os.WriteFile(v.path, finalData, 0600)
 }
 
-func (v *FileVault) Get() (string, string, error) {
+func (v *FileVault) readPayload() (credentialsPayload, error) {
+	var creds credentialsPayload
 	data, err := os.ReadFile(v.path)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: %v", ErrCredentialsNotFound, err)
+		return creds, fmt.Errorf("%w: %v", ErrCredentialsNotFound, err)
 	}
 
 	minLen := saltLen + nonceLen
 	if len(data) <= minLen {
-		return "", "", errors.New("archivo de bóveda corrupto o incompleto")
+		return creds, errors.New("archivo de bóveda corrupto o incompleto")
 	}
 
 	salt := data[:saltLen]
@@ -112,25 +111,56 @@ func (v *FileVault) Get() (string, string, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", "", fmt.Errorf("error creando cifrador AES: %w", err)
+		return creds, fmt.Errorf("error creando cifrador AES: %w", err)
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", "", fmt.Errorf("error inicializando GCM: %w", err)
+		return creds, fmt.Errorf("error inicializando GCM: %w", err)
 	}
 
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("fallo de autenticación/descifrado (contraseña incorrecta o datos alterados): %w", err)
+		return creds, fmt.Errorf("fallo de autenticación/descifrado (contraseña incorrecta o datos alterados): %w", err)
 	}
 
-	var creds credentialsPayload
 	if err := json.Unmarshal(plaintext, &creds); err != nil {
-		return "", "", fmt.Errorf("error deserializando credenciales: %w", err)
+		return creds, fmt.Errorf("error deserializando credenciales: %w", err)
 	}
 
+	return creds, nil
+}
+
+func (v *FileVault) Save(serverURL, secretToken string) error {
+	creds, _ := v.readPayload()
+	creds.ServerURL = serverURL
+	creds.SecretToken = secretToken
+	return v.writePayload(creds)
+}
+
+func (v *FileVault) Get() (string, string, error) {
+	creds, err := v.readPayload()
+	if err != nil {
+		return "", "", err
+	}
 	return creds.ServerURL, creds.SecretToken, nil
+}
+
+func (v *FileVault) SaveOpenRouterKey(key string) error {
+	creds, _ := v.readPayload()
+	creds.OpenRouterKey = key
+	return v.writePayload(creds)
+}
+
+func (v *FileVault) GetOpenRouterKey() (string, error) {
+	creds, err := v.readPayload()
+	if err != nil {
+		return "", err
+	}
+	if creds.OpenRouterKey == "" {
+		return "", ErrCredentialsNotFound
+	}
+	return creds.OpenRouterKey, nil
 }
 
 // KeyringVault implementa ports.VaultPort usando el Keyring nativo del SO.
@@ -159,6 +189,18 @@ func (k *KeyringVault) Get() (string, string, error) {
 	return url, token, nil
 }
 
+func (k *KeyringVault) SaveOpenRouterKey(key string) error {
+	return keyring.Set(ServiceName, "openrouter_key", key)
+}
+
+func (k *KeyringVault) GetOpenRouterKey() (string, error) {
+	key, err := keyring.Get(ServiceName, "openrouter_key")
+	if err != nil || key == "" {
+		return "", ErrCredentialsNotFound
+	}
+	return key, nil
+}
+
 // EnvVault implementa ports.VaultPort leyendo variables de entorno para CI/CD.
 type EnvVault struct{}
 
@@ -177,6 +219,18 @@ func (e *EnvVault) Get() (string, string, error) {
 		return "", "", ErrCredentialsNotFound
 	}
 	return url, token, nil
+}
+
+func (e *EnvVault) SaveOpenRouterKey(key string) error {
+	return errors.New("no se admite escritura en variables de entorno")
+}
+
+func (e *EnvVault) GetOpenRouterKey() (string, error) {
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		return "", ErrCredentialsNotFound
+	}
+	return key, nil
 }
 
 // CascadeVault implementa ports.VaultPort intentando en orden: Keyring -> Archivo cifrado -> Env vars.
@@ -224,4 +278,25 @@ func (c *CascadeVault) Get() (string, string, error) {
 	}
 
 	return "", "", ErrCredentialsNotFound
+}
+
+func (c *CascadeVault) SaveOpenRouterKey(key string) error {
+	err := c.keyring.SaveOpenRouterKey(key)
+	if err == nil {
+		return nil
+	}
+	return c.fileVault.SaveOpenRouterKey(key)
+}
+
+func (c *CascadeVault) GetOpenRouterKey() (string, error) {
+	if key, err := c.keyring.GetOpenRouterKey(); err == nil && key != "" {
+		return key, nil
+	}
+	if key, err := c.fileVault.GetOpenRouterKey(); err == nil && key != "" {
+		return key, nil
+	}
+	if key, err := c.envVault.GetOpenRouterKey(); err == nil && key != "" {
+		return key, nil
+	}
+	return "", ErrCredentialsNotFound
 }

@@ -76,3 +76,47 @@ func TestVault_CascadeFallback_EnvVars(t *testing.T) {
 		t.Fatalf("valores de env incorrectos")
 	}
 }
+
+func TestVault_OpenRouterKeyPersistence(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_vault_or_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	passphrase := "entropy_for_tests"
+
+	v := vault.NewFileVault(filePath, passphrase)
+
+	apiKey := "sk-or-v1-abcdef1234567890"
+
+	// 1. Guardar clave de OpenRouter
+	if err := v.SaveOpenRouterKey(apiKey); err != nil {
+		t.Fatalf("error guardando openrouter key: %v", err)
+	}
+
+	// 2. Recuperar clave
+	gotKey, err := v.GetOpenRouterKey()
+	if err != nil {
+		t.Fatalf("error obteniendo openrouter key: %v", err)
+	}
+	if gotKey != apiKey {
+		t.Errorf("esperado %s, obtenido %s", apiKey, gotKey)
+	}
+
+	// 3. Guardar credenciales de servidor sin sobreescribir la API Key
+	if err := v.Save("https://tracker.solv", "token_123"); err != nil {
+		t.Fatalf("error guardando credenciales: %v", err)
+	}
+
+	gotURL, gotToken, err := v.Get()
+	if err != nil || gotURL != "https://tracker.solv" || gotToken != "token_123" {
+		t.Fatalf("error recuperando credenciales de servidor: %v", err)
+	}
+
+	gotKeyAfter, err := v.GetOpenRouterKey()
+	if err != nil || gotKeyAfter != apiKey {
+		t.Fatalf("la API Key debio persistir tras guardar credenciales: %v", err)
+	}
+}

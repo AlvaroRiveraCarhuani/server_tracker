@@ -38,6 +38,19 @@ var (
 			Background(ColorLavender).
 			Padding(0, 1)
 
+	StyleSolvBranding = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(ColorMauve)
+
+	StyleCard = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(ColorSurface1).
+			Padding(0, 1)
+
+	StyleCardTitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorLavender)
+
 	StyleHeader = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorMauve).
@@ -110,6 +123,12 @@ var (
 	StyleSparklineNormal  = lipgloss.NewStyle().Foreground(ColorGreen)
 	StyleSparklineWarning = lipgloss.NewStyle().Foreground(ColorPeach)
 	StyleSparklineDanger  = lipgloss.NewStyle().Foreground(ColorRed)
+
+	StyleTrendsBox = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(ColorSurface1).
+			Padding(0, 1).
+			MarginBottom(1)
 )
 
 // FormatStatus renderiza los glifos ASCII con semántica cromática estricta y alto contraste

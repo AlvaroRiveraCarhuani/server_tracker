@@ -47,7 +47,7 @@ func main() {
 		}
 
 	case "tui":
-		if err := tui.RunTUI(collector); err != nil {
+		if err := tui.RunTUI(collector, vaultService); err != nil {
 			log.Fatalf("[ERROR] Fallo ejecutando TUI: %v", err)
 		}
 
@@ -87,7 +87,7 @@ func main() {
 		fmt.Println("  --mode=status       Verifica el estado de configuracion")
 		fmt.Println()
 		fmt.Println("Iniciando TUI...")
-		if err := tui.RunTUI(collector); err != nil {
+		if err := tui.RunTUI(collector, vaultService); err != nil {
 			log.Fatalf("[ERROR] Fallo ejecutando TUI: %v", err)
 		}
 	}
