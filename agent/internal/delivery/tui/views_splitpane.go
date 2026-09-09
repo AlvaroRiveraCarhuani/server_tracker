@@ -29,7 +29,7 @@ func (m Model) View() string {
 	}
 
 	if m.activeState == stateConfigModal {
-		return overlayModal(baseView, m.viewConfigModal(), m.width, m.height)
+		return overlayModal(baseView, m.viewAIModal(), m.width, m.height)
 	}
 
 	if m.activeState == stateThemeModal {
@@ -404,6 +404,9 @@ func (m Model) viewTable() string {
 			if hasUsage && usage.TotalTokens > 0 {
 				usageBadge = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [%d tok • ~$%.4f]", usage.TotalTokens, usage.EstimatedCostUSD))
 			}
+			if strings.Contains(diag, "no configurado") {
+				diag = "Diagnóstico no configurado · [c]"
+			}
 			bannerContent := fmt.Sprintf("%s %s%s", StyleAIOpsTag.Render("[AIOps]"), diag, usageBadge)
 			b.WriteString(StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
 		}
@@ -422,9 +425,35 @@ func (m Model) viewTable() string {
 			}
 			aiStatsTag := ""
 			if m.sessionTokensUsed > 0 {
-				aiStatsTag = fmt.Sprintf("  |  󰚩 %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
+				aiStatsTag = fmt.Sprintf("  |  %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
 			}
-			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
+
+			// Token V0 de Modo AIOps
+			modeToken := ""
+			switch m.aiConfig.SelectionMode {
+			case domain.SelectionAuto:
+				modeToken = "[Tab] modo: AUTO (deriva por severidad)"
+			case domain.SelectionFast:
+				fastM := domain.GetAssignedModel(domain.SlotFast, m.aiConfig.SlotPolicy)
+				disp := fastM.DisplayName
+				if disp == "" {
+					disp = fastM.ID
+				}
+				modeToken = fmt.Sprintf("[Tab] modo: FAST · %s (%s)", disp, modelTag(fastM))
+			case domain.SelectionDeep:
+				deepM := domain.GetAssignedModel(domain.SlotDeep, m.aiConfig.SlotPolicy)
+				disp := deepM.DisplayName
+				if disp == "" {
+					disp = deepM.ID
+				}
+				modeToken = fmt.Sprintf("[Tab] modo: DEEP · %s (%s)", disp, modelTag(deepM))
+			case domain.SelectionManual:
+				modeToken = fmt.Sprintf("[Tab] modo: MANUAL · %s", m.aiConfig.ActiveModel)
+			default:
+				modeToken = "[Tab] modo: AUTO (deriva por severidad)"
+			}
+
+			shortcuts := fmt.Sprintf("%s  |  [j/k]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s%s", modeToken, filterTag, aiStatsTag)
 			b.WriteString(StyleStatusBar.Render(shortcuts))
 		}
 	}

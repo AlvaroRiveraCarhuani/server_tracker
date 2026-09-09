@@ -16,6 +16,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case catalogSyncedMsg:
+		return m, nil
+
+	case discoveryMsg:
+		m.discoveredConnectors = msg.results
+		var allDiscovered []domain.ModelRef
+		for _, res := range msg.results {
+			if len(res.Models) > 0 {
+				allDiscovered = append(allDiscovered, res.Models...)
+			}
+		}
+		if len(allDiscovered) > 0 {
+			m.discoveredModels = allDiscovered
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -176,217 +192,310 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case stateConfigModal:
-			items := m.getFilteredModelItems()
-			switch m.configMode {
-			case configViewSelectModel:
+			switch m.aiState {
+			case aiViewPolicy: // V1: Politica de Asignaciones (FAST / DEEP / AUTO)
 				switch msg.String() {
-				case "esc", "ctrl+c":
-					m.modelSearchInput.Blur()
+				case "esc", "q", "ctrl+c":
 					m.activeState = stateFleetTable
 					return m, nil
-				case "up", "ctrl+p", "ctrl+k":
-					if len(items) > 0 {
-						newCursor := m.modelListCursor - 1
-						for newCursor >= 0 && items[newCursor].isHeader {
-							newCursor--
-						}
-						if newCursor >= 0 {
-							m.modelListCursor = newCursor
-						}
+				case "up", "k":
+					if m.aiPolicyCursor > 0 {
+						m.aiPolicyCursor--
 					}
 					return m, nil
-				case "down", "ctrl+n", "ctrl+j":
-					if len(items) > 0 {
-						newCursor := m.modelListCursor + 1
-						for newCursor < len(items) && items[newCursor].isHeader {
-							newCursor++
-						}
-						if newCursor < len(items) {
-							m.modelListCursor = newCursor
-						}
+				case "down", "j":
+					if m.aiPolicyCursor < 2 {
+						m.aiPolicyCursor++
 					}
 					return m, nil
-				case "ctrl+a":
-					// Conectar / editar API Key del ítem seleccionado o activo
-					selectedProv := m.aiConfig.ActiveProvider
-					if m.modelListCursor >= 0 && m.modelListCursor < len(items) {
-						it := items[m.modelListCursor]
-						if !it.isHeader && !it.isCustom {
-							selectedProv = it.option.Provider
-						}
-					}
-					m.connectProvider = selectedProv
-					m.configMode = configViewConnectKey
-					m.connectFocusField = 0
-					pCfg := m.aiConfig.Providers[selectedProv]
-					m.apiKeyInput.Reset()
-					m.apiKeyInput.SetValue(pCfg.APIKey)
-					m.endpointInput.Reset()
-					m.endpointInput.SetValue(pCfg.Endpoint)
-					m.apiKeyInput.Focus()
-					m.endpointInput.Blur()
-					return m, textinput.Blink
+				case "p", "P":
+					m.aiState = aiViewProviders
+					m.aiProvidersCursor = 0
+					return m, nil
 				case "enter":
-					if m.modelListCursor >= 0 && m.modelListCursor < len(items) {
-						it := items[m.modelListCursor]
-						if it.isHeader {
+					if m.aiPolicyCursor == 0 {
+						m.aiTargetSlot = domain.SlotFast
+						m.aiState = aiViewModelBrowser
+						m.aiSearchActive = false
+						m.aiSearchInput.Reset()
+						m.aiBrowserCursor = 0
+						items := m.getBrowserItems()
+						for idx, it := range items {
+							if it.isModel {
+								m.aiBrowserCursor = idx
+								break
+							}
+						}
+						return m, nil
+					} else if m.aiPolicyCursor == 1 {
+						m.aiTargetSlot = domain.SlotDeep
+						m.aiState = aiViewModelBrowser
+						m.aiSearchActive = false
+						m.aiSearchInput.Reset()
+						m.aiBrowserCursor = 0
+						items := m.getBrowserItems()
+						for idx, it := range items {
+							if it.isModel {
+								m.aiBrowserCursor = idx
+								break
+							}
+						}
+						return m, nil
+					}
+					// AUTO (cursor == 2) es derivado de solo lectura
+					return m, nil
+				}
+
+			case aiViewModelBrowser: // V2: Navegador de Modelos
+				items := m.getBrowserItems()
+				if m.aiSearchActive {
+					switch msg.String() {
+					case "esc":
+						m.aiSearchActive = false
+						m.aiSearchInput.Blur()
+						return m, nil
+					case "enter":
+						m.aiSearchActive = false
+						m.aiSearchInput.Blur()
+						return m, nil
+					default:
+						var cmd tea.Cmd
+						m.aiSearchInput, cmd = m.aiSearchInput.Update(msg)
+						m.aiBrowserCursor = 0
+						return m, cmd
+					}
+				}
+
+				switch msg.String() {
+				case "esc":
+					m.aiState = aiViewPolicy
+					return m, nil
+				case "/":
+					m.aiSearchActive = true
+					m.aiSearchInput.Focus()
+					return m, textinput.Blink
+				case "f", "F":
+					m.aiFilterFree = !m.aiFilterFree
+					items := m.getBrowserItems()
+					m.aiBrowserCursor = 0
+					for idx, it := range items {
+						if it.isModel {
+							m.aiBrowserCursor = idx
+							break
+						}
+					}
+					return m, nil
+				case "l", "L":
+					m.aiFilterLocal = !m.aiFilterLocal
+					items := m.getBrowserItems()
+					m.aiBrowserCursor = 0
+					for idx, it := range items {
+						if it.isModel {
+							m.aiBrowserCursor = idx
+							break
+						}
+					}
+					return m, nil
+				case "up", "k":
+					if m.aiBrowserCursor > 0 {
+						newC := m.aiBrowserCursor - 1
+						for newC >= 0 && items[newC].isGroupHeader {
+							newC--
+						}
+						if newC >= 0 {
+							m.aiBrowserCursor = newC
+						}
+					}
+					return m, nil
+				case "down", "j":
+					if m.aiBrowserCursor < len(items)-1 {
+						newC := m.aiBrowserCursor + 1
+						for newC < len(items) && items[newC].isGroupHeader {
+							newC++
+						}
+						if newC < len(items) {
+							m.aiBrowserCursor = newC
+						}
+					}
+					return m, nil
+				case "enter":
+					if m.aiBrowserCursor >= 0 && m.aiBrowserCursor < len(items) {
+						it := items[m.aiBrowserCursor]
+						if it.isGroupHeader {
 							return m, nil
 						}
-						if it.isCustom {
-							m.configMode = configViewCustomModel
-							m.customModelInput.Reset()
-							m.customModelInput.SetValue(m.aiConfig.ActiveModel)
-							m.customModelInput.Focus()
-							return m, textinput.Blink
-						}
-						// Modelo de catálogo
-						prov := it.option.Provider
-						pCfg := m.aiConfig.Providers[prov]
-						meta := domain.GetProviderMeta(prov)
-
-						// Si requiere key y no tiene, pasar directo a conectar key
-						if meta.RequiresKey && strings.TrimSpace(pCfg.APIKey) == "" {
-							m.connectProvider = prov
-							m.configMode = configViewConnectKey
-							m.connectFocusField = 0
-							m.apiKeyInput.Reset()
+						if it.isCustomAdd {
+							m.aiState = aiViewCustomEndpoint
 							m.endpointInput.Reset()
-							m.endpointInput.SetValue(pCfg.Endpoint)
-							m.apiKeyInput.Focus()
-							m.endpointInput.Blur()
-							m.statusMessage = fmt.Sprintf("[INFO] %s requiere clave API para activarse", meta.Name)
-							m.statusExpiry = time.Now().Add(3 * time.Second)
+							m.apiKeyInput.Reset()
+							m.connectFocusField = 0
+							m.endpointInput.Focus()
+							m.apiKeyInput.Blur()
 							return m, textinput.Blink
 						}
+						if it.isModel {
+							if m.aiConfig.SlotPolicy.Assignments == nil {
+								m.aiConfig.SlotPolicy = domain.DefaultSlotPolicy()
+							}
+							m.aiConfig.SlotPolicy.Assignments[m.aiTargetSlot] = it.model
+							m.aiConfig.ActiveProvider = it.model.ProviderID
+							m.aiConfig.ActiveModel = it.model.ID
 
-						// Activar modelo y proveedor
-						m.aiConfig.ActiveProvider = prov
-						m.aiConfig.ActiveModel = it.option.ID
-						pCfg.DefaultModel = it.option.ID
-						m.aiConfig.Providers[prov] = pCfg
-						if m.vaultService != nil {
-							_ = m.vaultService.SaveAIConfig(m.aiConfig)
+							if m.vaultService != nil {
+								_ = m.vaultService.SaveAIConfig(m.aiConfig)
+							}
+							if tc, ok := m.triageClient.(*ai.TriageClient); ok {
+								tc.SetConfig(m.aiConfig)
+							}
+							m.diagnosisCache = make(map[string]string)
+							m.statusMessage = fmt.Sprintf("[OK] Slot %s asignado a %s", strings.ToUpper(string(m.aiTargetSlot)), it.model.DisplayName)
+							m.statusExpiry = time.Now().Add(3 * time.Second)
+
+							m.aiState = aiViewPolicy
+							return m, nil
 						}
-						m.triageClient = ai.NewTriageClientWithConfig(m.aiConfig)
-						m.diagnosisCache = make(map[string]string)
-						m.statusMessage = fmt.Sprintf("[OK] Modelo activo: %s (%s)", it.option.DisplayName, meta.Name)
-						m.statusExpiry = time.Now().Add(4 * time.Second)
-						m.activeState = stateFleetTable
-						return m, nil
 					}
-				default:
-					var cmd tea.Cmd
-					m.modelSearchInput, cmd = m.modelSearchInput.Update(msg)
-					// Reajustar cursor al primer ítem seleccionable si la lista cambia
-					newItems := m.getFilteredModelItems()
-					if m.modelListCursor >= len(newItems) {
-						m.modelListCursor = 0
-					}
-					for m.modelListCursor < len(newItems) && newItems[m.modelListCursor].isHeader {
-						m.modelListCursor++
-					}
-					return m, cmd
 				}
 
-			case configViewConnectKey:
+			case aiViewProviders: // V3: Proveedores
+				rows := m.getProviderRows()
+				switch msg.String() {
+				case "esc":
+					m.aiState = aiViewPolicy
+					return m, nil
+				case "up", "k":
+					if m.aiProvidersCursor > 0 {
+						m.aiProvidersCursor--
+					}
+					return m, nil
+				case "down", "j":
+					if m.aiProvidersCursor < len(rows)-1 {
+						m.aiProvidersCursor++
+					}
+					return m, nil
+				case "r", "R":
+					m.statusMessage = "[OK] Escaneando proveedores..."
+					m.statusExpiry = time.Now().Add(2 * time.Second)
+					return m, m.probeConnectorsCmd()
+				case "a", "A":
+					m.aiState = aiViewCustomEndpoint
+					m.endpointInput.Reset()
+					m.apiKeyInput.Reset()
+					m.connectFocusField = 0
+					m.endpointInput.Focus()
+					m.apiKeyInput.Blur()
+					return m, textinput.Blink
+				case "enter":
+					if m.aiProvidersCursor >= 0 && m.aiProvidersCursor < len(rows) {
+						r := rows[m.aiProvidersCursor]
+						if r.isCustom {
+							m.aiState = aiViewCustomEndpoint
+							m.endpointInput.Reset()
+							m.apiKeyInput.Reset()
+							m.connectFocusField = 0
+							m.endpointInput.Focus()
+							m.apiKeyInput.Blur()
+							return m, textinput.Blink
+						}
+						if r.family == domain.FamilyCloudManaged {
+							m.connectProvider = r.providerID
+							m.aiState = aiViewKeyInput
+							pCfg := m.aiConfig.Providers[r.providerID]
+							m.apiKeyInput.Reset()
+							m.apiKeyInput.SetValue(pCfg.APIKey)
+							m.apiKeyInput.Focus()
+							return m, textinput.Blink
+						}
+						if r.family == domain.FamilyLocalRuntime && r.status == domain.StatusDetected {
+							m.aiTargetSlot = domain.SlotFast
+							m.aiState = aiViewModelBrowser
+							m.aiBrowserCursor = 0
+							m.aiFilterLocal = true
+							m.aiSearchActive = false
+							m.aiSearchInput.Reset()
+							return m, nil
+						}
+					}
+				}
+
+			case aiViewKeyInput: // Sub-paso Key Input
 				switch msg.String() {
 				case "esc":
 					m.apiKeyInput.Blur()
-					m.endpointInput.Blur()
-					m.configMode = configViewSelectModel
-					m.modelSearchInput.Focus()
-					return m, textinput.Blink
-				case "tab", "down":
-					m.connectFocusField = (m.connectFocusField + 1) % 2
-					if m.connectFocusField == 0 {
-						m.apiKeyInput.Focus()
-						m.endpointInput.Blur()
-					} else {
-						m.apiKeyInput.Blur()
-						m.endpointInput.Focus()
-					}
-					return m, textinput.Blink
-				case "shift+tab", "up":
-					m.connectFocusField = (m.connectFocusField + 1) % 2
-					if m.connectFocusField == 0 {
-						m.apiKeyInput.Focus()
-						m.endpointInput.Blur()
-					} else {
-						m.apiKeyInput.Blur()
-						m.endpointInput.Focus()
-					}
-					return m, textinput.Blink
+					m.aiState = aiViewProviders
+					return m, nil
 				case "enter":
-					valKey := strings.TrimSpace(m.apiKeyInput.Value())
-					valEP := strings.TrimSpace(m.endpointInput.Value())
+					keyVal := strings.TrimSpace(m.apiKeyInput.Value())
 					prov := m.connectProvider
-					meta := domain.GetProviderMeta(prov)
 					pCfg := m.aiConfig.Providers[prov]
-					pCfg.APIKey = valKey
-					pCfg.Endpoint = valEP
-					if pCfg.DefaultModel == "" {
-						pCfg.DefaultModel = meta.DefaultModel
-					}
+					pCfg.APIKey = keyVal
 					m.aiConfig.Providers[prov] = pCfg
-					m.aiConfig.ActiveProvider = prov
-					m.aiConfig.ActiveModel = pCfg.DefaultModel
 
 					if m.vaultService != nil {
-						if err := m.vaultService.SaveAIConfig(m.aiConfig); err != nil {
-							m.statusMessage = fmt.Sprintf("[!!] Error guardando en bóveda: %v", err)
-						} else {
-							m.statusMessage = fmt.Sprintf("[OK] Clave de %s cifrada bajo Blindaje D2 (AES-256-GCM)", meta.Name)
-						}
+						_ = m.vaultService.SaveAIConfig(m.aiConfig)
 					}
-					m.triageClient = ai.NewTriageClientWithConfig(m.aiConfig)
+					if tc, ok := m.triageClient.(*ai.TriageClient); ok {
+						tc.SetConfig(m.aiConfig)
+					}
 					m.diagnosisCache = make(map[string]string)
-					m.statusExpiry = time.Now().Add(4 * time.Second)
+					m.statusMessage = fmt.Sprintf("[OK] Clave de %s guardada en bóveda", prov)
+					m.statusExpiry = time.Now().Add(3 * time.Second)
 					m.apiKeyInput.Blur()
-					m.endpointInput.Blur()
-					m.configMode = configViewSelectModel
-					m.modelSearchInput.Focus()
-					return m, textinput.Blink
+					m.aiState = aiViewProviders
+					return m, nil
 				default:
 					var cmd tea.Cmd
-					if m.connectFocusField == 0 {
-						m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
-					} else {
-						m.endpointInput, cmd = m.endpointInput.Update(msg)
-					}
+					m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
 					return m, cmd
 				}
 
-			case configViewCustomModel:
+			case aiViewCustomEndpoint: // Sub-paso Custom Endpoint
 				switch msg.String() {
 				case "esc":
-					m.customModelInput.Blur()
-					m.configMode = configViewSelectModel
-					m.modelSearchInput.Focus()
+					m.endpointInput.Blur()
+					m.apiKeyInput.Blur()
+					m.aiState = aiViewProviders
+					return m, nil
+				case "tab", "down", "up":
+					m.connectFocusField = (m.connectFocusField + 1) % 2
+					if m.connectFocusField == 0 {
+						m.endpointInput.Focus()
+						m.apiKeyInput.Blur()
+					} else {
+						m.endpointInput.Blur()
+						m.apiKeyInput.Focus()
+					}
 					return m, textinput.Blink
 				case "enter":
-					customVal := strings.TrimSpace(m.customModelInput.Value())
-					if customVal != "" {
-						m.aiConfig.ActiveModel = customVal
-						prov := m.aiConfig.ActiveProvider
-						pCfg := m.aiConfig.Providers[prov]
-						pCfg.DefaultModel = customVal
-						m.aiConfig.Providers[prov] = pCfg
+					urlVal := strings.TrimSpace(m.endpointInput.Value())
+					keyVal := strings.TrimSpace(m.apiKeyInput.Value())
+					if urlVal != "" {
+						pCfg := m.aiConfig.Providers[domain.ProviderCustom]
+						pCfg.Endpoint = urlVal
+						pCfg.APIKey = keyVal
+						m.aiConfig.Providers[domain.ProviderCustom] = pCfg
+
 						if m.vaultService != nil {
 							_ = m.vaultService.SaveAIConfig(m.aiConfig)
 						}
-						m.triageClient = ai.NewTriageClientWithConfig(m.aiConfig)
+						if tc, ok := m.triageClient.(*ai.TriageClient); ok {
+							tc.SetConfig(m.aiConfig)
+						}
 						m.diagnosisCache = make(map[string]string)
-						m.statusMessage = fmt.Sprintf("[OK] Modelo personalizado activo: %s", customVal)
-						m.statusExpiry = time.Now().Add(4 * time.Second)
-						m.activeState = stateFleetTable
-						return m, nil
+						m.statusMessage = "[OK] Endpoint personalizado configurado"
+						m.statusExpiry = time.Now().Add(3 * time.Second)
 					}
-					m.configMode = configViewSelectModel
-					m.modelSearchInput.Focus()
-					return m, textinput.Blink
+					m.endpointInput.Blur()
+					m.apiKeyInput.Blur()
+					m.aiState = aiViewProviders
+					return m, nil
 				default:
 					var cmd tea.Cmd
-					m.customModelInput, cmd = m.customModelInput.Update(msg)
+					if m.connectFocusField == 0 {
+						m.endpointInput, cmd = m.endpointInput.Update(msg)
+					} else {
+						m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
+					}
 					return m, cmd
 				}
 			}
@@ -437,20 +546,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return shellFinishedMsg{err: err}
 					})
 				}
+			case "tab":
+				switch m.aiConfig.SelectionMode {
+				case domain.SelectionAuto:
+					m.aiConfig.SelectionMode = domain.SelectionFast
+					m.statusMessage = "Modo FAST: inferencia rápida y estructurada"
+				case domain.SelectionFast:
+					m.aiConfig.SelectionMode = domain.SelectionDeep
+					m.statusMessage = "Modo DEEP: análisis profundo con razonamiento"
+				case domain.SelectionDeep:
+					m.aiConfig.SelectionMode = domain.SelectionManual
+					m.statusMessage = "Modo MANUAL: inferencia solo a demanda"
+				case domain.SelectionManual:
+					m.aiConfig.SelectionMode = domain.SelectionAuto
+					m.statusMessage = "Modo AUTO: enrutamiento por severidad"
+				default:
+					m.aiConfig.SelectionMode = domain.SelectionAuto
+					m.statusMessage = "Modo AUTO: enrutamiento por severidad"
+				}
+				if m.vaultService != nil {
+					_ = m.vaultService.SaveAIConfig(m.aiConfig)
+				}
+				if tc, ok := m.triageClient.(*ai.TriageClient); ok {
+					tc.SetConfig(m.aiConfig)
+				}
+				m.statusExpiry = time.Now().Add(3 * time.Second)
+				return m, nil
+
 			case "c":
 				m.activeState = stateConfigModal
-				m.configMode = configViewSelectModel
-				m.modelSearchInput.Reset()
-				m.modelSearchInput.Focus()
-				m.modelListCursor = 0
-				items := m.getFilteredModelItems()
-				for idx, it := range items {
-					if it.isActive {
-						m.modelListCursor = idx
-						break
-					}
-				}
-				return m, textinput.Blink
+				m.aiState = aiViewPolicy
+				m.aiPolicyCursor = 0
+				return m, nil
 
 			case "t":
 				m.activeState = stateThemeModal

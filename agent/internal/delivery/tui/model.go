@@ -33,16 +33,24 @@ type Model struct {
 	filterInput        textinput.Model
 	filterValue        string
 
-	// Estado del Modal de IA estilo OpenCode
-	configMode         configViewMode
-	modelSearchInput   textinput.Model
-	apiKeyInput        textinput.Model
-	endpointInput      textinput.Model
-	customModelInput   textinput.Model
-	connectFocusField  int // 0: Key, 1: Endpoint
-	modelListCursor    int
-	connectProvider    domain.AIProvider
-	aiConfig           domain.AIConfig
+	// Estado del Subsistema de IA: Grafo de 3 vistas y Discovery
+	catalogService       *ai.CatalogService
+	aiState              aiViewState
+	aiPolicyCursor       int // 0: FAST, 1: DEEP, 2: AUTO
+	aiTargetSlot         domain.DiagnosisSlot
+	aiBrowserCursor      int
+	aiFilterFree         bool
+	aiFilterLocal        bool
+	aiSearchActive       bool
+	aiSearchInput        textinput.Model
+	aiProvidersCursor    int
+	connectProvider      domain.AIProvider
+	apiKeyInput          textinput.Model
+	endpointInput        textinput.Model
+	connectFocusField    int // 0: URL, 1: Key
+	aiConfig             domain.AIConfig
+	discoveredConnectors map[domain.AIProvider]ai.DiscoveryResult
+	discoveredModels     []domain.ModelRef
 
 	// Métricas de consumo AIOps
 	sessionTokensUsed int
@@ -77,39 +85,31 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	ti.Prompt = "/ "
 	ti.PromptStyle = StyleFilterPrompt
 
-	// Input para búsqueda de modelos OpenCode style
+	// Input para búsqueda rápida en el navegador de modelos (V2)
 	ms := textinput.New()
-	ms.Placeholder = "Buscar modelo o proveedor..."
-	ms.Prompt = "Search "
+	ms.Placeholder = "buscar modelo..."
+	ms.Prompt = "/ "
 	ms.PromptStyle = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true)
 	ms.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ms.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 
-	// Input para clave de API
+	// Input para clave de API (V3 sub-paso)
 	ki := textinput.New()
-	ki.Placeholder = "sk-... o clave del proveedor"
-	ki.Prompt = "API Key: "
+	ki.Placeholder = "pegar API key..."
+	ki.Prompt = "Key: "
 	ki.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Bold(true)
 	ki.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ki.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 	ki.EchoMode = textinput.EchoPassword
 	ki.EchoCharacter = '•'
 
-	// Input para Base URL / Endpoint
+	// Input para Base URL / Endpoint (V3 sub-paso custom)
 	ei := textinput.New()
-	ei.Placeholder = "https://api... o http://localhost:11434"
-	ei.Prompt = "Base URL: "
+	ei.Placeholder = "http://localhost:8080/v1"
+	ei.Prompt = "URL: "
 	ei.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Bold(true)
 	ei.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 	ei.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
-
-	// Input para modelo custom
-	ci := textinput.New()
-	ci.Placeholder = "ej. deepseek/deepseek-r1 o claude-3-7-sonnet"
-	ci.Prompt = "Model ID: "
-	ci.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Bold(true)
-	ci.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
-	ci.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)
@@ -145,13 +145,18 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		themeCfg = domain.DefaultThemeConfig()
 	}
 
-	ApplyTheme(themeCfg.ActiveTheme, themeCfg.BorderStyle, themeCfg.NerdFonts)
+	homeDir, _ := os.UserHomeDir()
+	catCachePath := filepath.Join(homeDir, ".solv", "catalog_cache.json")
+	catSvc := ai.NewCatalogService(catCachePath)
 
 	var triageClient TriageService
 	if aiCfg.ActiveProvider != "" {
 		triageClient = ai.NewTriageClientWithConfig(aiCfg)
 	} else {
 		triageClient = ai.NewTriageClient()
+	}
+	if tc, ok := triageClient.(*ai.TriageClient); ok {
+		tc.SetCatalogService(catSvc)
 	}
 
 	themeCursor := 0
@@ -174,35 +179,67 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	}
 
 	return Model{
-		collector:          collector,
-		vaultService:       vaultSvc,
-		triageClient:       triageClient,
-		diagnosisCache:     make(map[string]string),
-		lastDiagnosisUsage: make(map[string]domain.TokenUsage),
-		triagePending:      make(map[string]bool),
-		metricsHistory:     make(map[string]*MetricHistory),
-		pinnedContainers:   pinnedMap,
-		cursor:             0,
-		activeState:        stateFleetTable,
-		filterInput:        ti,
-		modelSearchInput:   ms,
-		apiKeyInput:        ki,
-		endpointInput:      ei,
-		customModelInput:   ci,
-		aiConfig:           aiCfg,
-		themeConfig:        themeCfg,
-		themeListCursor:    themeCursor,
-		configMode:         configViewSelectModel,
-		connectProvider:    aiCfg.ActiveProvider,
-		viewport:           vp,
-		lastSync:           time.Now(),
-		width:              100,
-		height:             24,
+		collector:            collector,
+		vaultService:         vaultSvc,
+		triageClient:         triageClient,
+		catalogService:       catSvc,
+		diagnosisCache:       make(map[string]string),
+		lastDiagnosisUsage:   make(map[string]domain.TokenUsage),
+		triagePending:        make(map[string]bool),
+		metricsHistory:       make(map[string]*MetricHistory),
+		pinnedContainers:     pinnedMap,
+		cursor:               0,
+		activeState:          stateFleetTable,
+		filterInput:          ti,
+		aiState:              aiViewPolicy,
+		aiPolicyCursor:       0,
+		aiTargetSlot:         domain.SlotFast,
+		aiBrowserCursor:      0,
+		aiSearchInput:        ms,
+		apiKeyInput:          ki,
+		endpointInput:        ei,
+		aiConfig:             aiCfg,
+		themeConfig:          themeCfg,
+		themeListCursor:      themeCursor,
+		connectProvider:      aiCfg.ActiveProvider,
+		discoveredConnectors: make(map[domain.AIProvider]ai.DiscoveryResult),
+		discoveredModels:     make([]domain.ModelRef, 0),
+		viewport:             vp,
+		lastSync:             time.Now(),
+		width:                100,
+		height:               24,
+	}
+}
+
+type catalogSyncedMsg struct{}
+type discoveryMsg struct {
+	results map[domain.AIProvider]ai.DiscoveryResult
+}
+
+func (m Model) probeConnectorsCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		defer cancel()
+		connectors := ai.DefaultConnectors()
+		results := ai.ProbeConnectors(ctx, connectors, m.aiConfig.Providers, nil)
+		return discoveryMsg{results: results}
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchMetrics(), tickCmd())
+	return tea.Batch(m.fetchMetrics(), m.syncCatalog(), m.probeConnectorsCmd(), tickCmd())
+}
+
+func (m Model) syncCatalog() tea.Cmd {
+	return func() tea.Msg {
+		if m.catalogService == nil {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = m.catalogService.SyncIfExpired(ctx, 1*time.Hour, m.aiConfig.Providers)
+		return catalogSyncedMsg{}
+	}
 }
 
 func (m Model) fetchMetrics() tea.Cmd {

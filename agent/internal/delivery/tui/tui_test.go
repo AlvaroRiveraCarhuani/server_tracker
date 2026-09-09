@@ -428,51 +428,65 @@ func TestTUI_ConfigModalWorkflow(t *testing.T) {
 	model := NewModel(collector, vaultMock)
 	model.metrics = sampleMetrics()
 
-	// 1. Abrir modal con 'c' -> configViewSelectModel (OpenCode style)
+	// 1. Abrir modal con 'c' -> aiViewPolicy (V1)
 	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m := newModel.(Model)
 	if m.activeState != stateConfigModal {
 		t.Fatalf("expected activeState to be stateConfigModal, got %v", m.activeState)
 	}
-	if m.configMode != configViewSelectModel {
-		t.Fatalf("expected configMode to be configViewSelectModel, got %v", m.configMode)
+	if m.aiState != aiViewPolicy {
+		t.Fatalf("expected aiState to be aiViewPolicy, got %v", m.aiState)
 	}
 
-	// 2. Renderizar vista estilo OpenCode
+	// 2. Renderizar vista V1: Política de Asignaciones
 	renderedModal := m.View()
-	if !strings.Contains(renderedModal, "Select model") || !strings.Contains(renderedModal, "Search") {
-		t.Errorf("expected view to contain OpenCode header 'Select model' and 'Search', got:\n%s", renderedModal)
+	if !strings.Contains(renderedModal, "diagnóstico · asignaciones") {
+		t.Errorf("expected view to contain title 'diagnóstico · asignaciones', got:\n%s", renderedModal)
 	}
-	if !strings.Contains(renderedModal, "Ctrl+A: Connect provider") {
-		t.Errorf("expected view to contain shortcut guide for Ctrl+A, got:\n%s", renderedModal)
+	if !strings.Contains(renderedModal, "[FAST]") || !strings.Contains(renderedModal, "[DEEP]") || !strings.Contains(renderedModal, "[AUTO]") {
+		t.Errorf("expected view to contain slot tags, got:\n%s", renderedModal)
 	}
 
-	// 3. Presionar Ctrl+A para conectar credencial de proveedor
-	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	// 3. Probar navegación a V3 (Proveedores) con 'p'
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	m = newModel.(Model)
-	if m.configMode != configViewConnectKey {
-		t.Fatalf("expected configMode to be configViewConnectKey after Ctrl+A, got %v", m.configMode)
+	if m.aiState != aiViewProviders {
+		t.Fatalf("expected aiState to be aiViewProviders after 'p', got %v", m.aiState)
 	}
 
-	// 4. Escribir clave de Anthropic
-	for _, r := range "sk-ant-testkey999" {
+	// 4. Presionar Enter sobre OpenRouter (fila 0) -> entra a aiViewKeyInput (sub-paso de clave)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+	if m.aiState != aiViewKeyInput {
+		t.Fatalf("expected aiState to be aiViewKeyInput after Enter on provider, got %v", m.aiState)
+	}
+
+	// 5. Escribir clave de OpenRouter
+	for _, r := range "sk-or-testkey999" {
 		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = newModel.(Model)
 	}
 
-	// 5. Presionar Enter para guardar clave en la bóveda
+	// 6. Presionar Enter para guardar clave en la bóveda
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(Model)
 
-	if m.configMode != configViewSelectModel {
-		t.Errorf("expected to return to configViewSelectModel after saving key, got %v", m.configMode)
+	if m.aiState != aiViewProviders {
+		t.Errorf("expected to return to aiViewProviders after saving key, got %v", m.aiState)
 	}
-	antCfg := vaultMock.savedAIConfig.Providers[m.connectProvider]
-	if antCfg.APIKey != "sk-ant-testkey999" {
-		t.Errorf("expected vault to store provider key, got %s", antCfg.APIKey)
+	orCfg := vaultMock.savedAIConfig.Providers[m.connectProvider]
+	if orCfg.APIKey != "sk-or-testkey999" {
+		t.Errorf("expected vault to store provider key, got %s", orCfg.APIKey)
 	}
 
-	// 6. Salir del modal con Esc
+	// 7. Volver a V1 con Esc
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if m.aiState != aiViewPolicy {
+		t.Errorf("expected aiState aiViewPolicy after Esc from providers, got %v", m.aiState)
+	}
+
+	// 8. Salir del modal con Esc -> vuelve a fleet table
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newModel.(Model)
 	if m.activeState != stateFleetTable {
@@ -765,8 +779,8 @@ func TestTUI_ContainerPinningWorkflow(t *testing.T) {
 	if !strings.Contains(view, "─") {
 		t.Errorf("expected divider line in left pane, got:\n%s", view)
 	}
-	if strings.Contains(view, "📌") {
-		t.Errorf("expected zero emojis in TUI view, found 📌 in:\n%s", view)
+	if strings.Contains(view, "\U0001F4CC") {
+		t.Errorf("expected zero emojis in TUI view, found pin emoji in:\n%s", view)
 	}
 
 	// 5. Presionar 'P' (Shift+P) para desanclar todos los contenedores
@@ -779,6 +793,175 @@ func TestTUI_ContainerPinningWorkflow(t *testing.T) {
 	clearedList := mod2.filteredMetrics()
 	if clearedList[0].Name != "alpha_service" {
 		t.Errorf("expected alpha_service to be first again after clearing pins, got %s", clearedList[0].Name)
+	}
+}
+
+func assertZeroEmojisInView(t *testing.T, viewContent string, viewName string) {
+	for _, r := range viewContent {
+		if (r >= 0x1F300 && r <= 0x1FAFF) || (r >= 0x2600 && r <= 0x27BF) {
+			t.Errorf("detected forbidden emoji '%c' (U+%04X) in %s view:\n%s", r, r, viewName, viewContent)
+		}
+	}
+}
+
+func TestTUI_AIOpsHierarchicalCatalogAndZeroEmojis(t *testing.T) {
+	collector := &mockCollectorForTUI{metrics: sampleMetrics()}
+	vaultMock := &mockVaultForTUI{}
+	model := NewModel(collector, vaultMock)
+	model.metrics = sampleMetrics()
+	model.width = 100
+	model.height = 30
+
+	// 0. Probar ciclo de Modo V0 en status bar con Tab
+	modes := []struct {
+		mode     domain.ModelSelectionMode
+		tokenSub string
+	}{
+		{domain.SelectionFast, "FAST"},
+		{domain.SelectionDeep, "DEEP"},
+		{domain.SelectionManual, "MANUAL"},
+		{domain.SelectionAuto, "AUTO"},
+	}
+
+	for _, tc := range modes {
+		newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+		model = newModel.(Model)
+		if model.aiConfig.SelectionMode != tc.mode {
+			t.Errorf("expected mode %v after Tab, got %v", tc.mode, model.aiConfig.SelectionMode)
+		}
+		statusView := model.View()
+		assertZeroEmojisInView(t, statusView, "Fleet Status Bar")
+		if !strings.Contains(statusView, tc.tokenSub) {
+			t.Errorf("expected status bar to contain mode %s, got:\n%s", tc.tokenSub, statusView)
+		}
+	}
+
+	// 1. Abrir modal de IA con 'c' -> V1 (aiViewPolicy)
+	newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m := newModel.(Model)
+	if m.activeState != stateConfigModal || m.aiState != aiViewPolicy {
+		t.Fatalf("expected stateConfigModal and aiViewPolicy, got state=%v, aiState=%v", m.activeState, m.aiState)
+	}
+
+	// 2. Verificar vista V1 y CERO emojis
+	v1View := m.View()
+	assertZeroEmojisInView(t, v1View, "V1 Policy View")
+	if !strings.Contains(v1View, "diagnóstico · asignaciones") {
+		t.Errorf("expected header 'diagnóstico · asignaciones', got:\n%s", v1View)
+	}
+	if !strings.Contains(v1View, "[FAST]") || !strings.Contains(v1View, "[DEEP]") || !strings.Contains(v1View, "[AUTO]") {
+		t.Errorf("expected slot tags in V1 view, got:\n%s", v1View)
+	}
+
+	// 3. Flujo rápido: Enter sobre FAST (cursor 0) -> entrar a V2 (aiViewModelBrowser) en <= 2 teclas
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+	if m.aiState != aiViewModelBrowser {
+		t.Fatalf("expected aiViewModelBrowser after Enter on FAST, got %v", m.aiState)
+	}
+	if m.aiTargetSlot != domain.SlotFast {
+		t.Errorf("expected target slot SlotFast, got %v", m.aiTargetSlot)
+	}
+
+	// 4. Verificar vista V2 y CERO emojis
+	v2View := m.View()
+	assertZeroEmojisInView(t, v2View, "V2 Model Browser")
+	if !strings.Contains(v2View, "modelo para FAST") {
+		t.Errorf("expected header 'modelo para FAST', got:\n%s", v2View)
+	}
+	if !strings.Contains(v2View, "[f] free") || !strings.Contains(v2View, "[l] local") {
+		t.Errorf("expected filter toggles in V2 view, got:\n%s", v2View)
+	}
+	if !strings.Contains(v2View, "ctx") || !strings.Contains(v2View, "p95") || !strings.Contains(v2View, "eval [OK]") {
+		t.Errorf("expected context line with gates metadata in V2 view, got:\n%s", v2View)
+	}
+
+	// 5. Probar conmutación de filtros 'f' (free) y 'l' (local)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = newModel.(Model)
+	if !m.aiFilterFree {
+		t.Errorf("expected aiFilterFree to be true after 'f'")
+	}
+	assertZeroEmojisInView(t, m.View(), "V2 Filter Free Active")
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = newModel.(Model)
+	if !m.aiFilterLocal {
+		t.Errorf("expected aiFilterLocal to be true after 'l'")
+	}
+	assertZeroEmojisInView(t, m.View(), "V2 Filter Local Active")
+
+	// Restablecer filtros
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = newModel.(Model)
+
+	// 6. Seleccionar modelo con Enter -> debe asignar al slot FAST y volver a V1
+	items := m.getBrowserItems()
+	modelIdx := -1
+	for idx, it := range items {
+		if it.isModel {
+			modelIdx = idx
+			break
+		}
+	}
+	if modelIdx == -1 {
+		t.Fatalf("no models found in browser items")
+	}
+	m.aiBrowserCursor = modelIdx
+	selectedModel := items[modelIdx].model
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+
+	if m.aiState != aiViewPolicy {
+		t.Fatalf("expected return to aiViewPolicy after selecting model, got %v", m.aiState)
+	}
+	assignedFast := domain.GetAssignedModel(domain.SlotFast, m.aiConfig.SlotPolicy)
+	if assignedFast.ID != selectedModel.ID {
+		t.Errorf("expected assigned slot model '%s', got '%s'", selectedModel.ID, assignedFast.ID)
+	}
+
+	// 7. Navegar a V3 (Proveedores) con 'p'
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = newModel.(Model)
+	if m.aiState != aiViewProviders {
+		t.Fatalf("expected aiViewProviders after 'p', got %v", m.aiState)
+	}
+
+	v3View := m.View()
+	assertZeroEmojisInView(t, v3View, "V3 Providers View")
+	if !strings.Contains(v3View, "proveedores") || !strings.Contains(v3View, "r: refresh") {
+		t.Errorf("expected V3 view header and refresh hint, got:\n%s", v3View)
+	}
+
+	// 8. Abrir sub-paso de custom endpoint con 'a'
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = newModel.(Model)
+	if m.aiState != aiViewCustomEndpoint {
+		t.Fatalf("expected aiViewCustomEndpoint after 'a', got %v", m.aiState)
+	}
+	customView := m.View()
+	assertZeroEmojisInView(t, customView, "Custom Endpoint Subview")
+
+	// 9. Salir con Esc de custom endpoint -> V3 -> Esc -> V1 -> Esc -> Fleet Table
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if m.aiState != aiViewProviders {
+		t.Errorf("expected return to aiViewProviders after Esc, got %v", m.aiState)
+	}
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if m.aiState != aiViewPolicy {
+		t.Errorf("expected return to aiViewPolicy after Esc, got %v", m.aiState)
+	}
+
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if m.activeState != stateFleetTable {
+		t.Errorf("expected return to stateFleetTable after Esc, got %v", m.activeState)
 	}
 }
 

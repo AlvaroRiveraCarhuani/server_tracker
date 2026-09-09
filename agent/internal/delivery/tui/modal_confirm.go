@@ -57,8 +57,8 @@ func (m Model) viewConfirmModal() string {
 			Bold(true)
 	}
 
-	btnConfirm := btnConfirmStyle.Render("✔  CONFIRMAR (y)")
-	btnCancel := btnCancelStyle.Render("✖  CANCELAR (n/Esc)")
+	btnConfirm := btnConfirmStyle.Render("[OK] CONFIRMAR (y)")
+	btnCancel := btnCancelStyle.Render("[X] CANCELAR (n/Esc)")
 	sep := lipgloss.NewStyle().Background(ColorSurface0).Render("      \n      \n      ")
 
 	buttonsRow := lipgloss.JoinHorizontal(lipgloss.Top, btnConfirm, sep, btnCancel)
