@@ -140,23 +140,23 @@ var (
 		Base:          lipgloss.Color("#101010"),
 		Mantle:        lipgloss.Color("#0c0c0c"),
 		Crust:         lipgloss.Color("#080808"),
-		Surface0:      lipgloss.Color("#1c1c1c"),
-		Surface1:      lipgloss.Color("#262626"),
-		Surface2:      lipgloss.Color("#363636"),
+		Surface0:      lipgloss.Color("#161616"),
+		Surface1:      lipgloss.Color("#1e1e1e"),
+		Surface2:      lipgloss.Color("#282828"),
 		Overlay0:      lipgloss.Color("#505050"),
 		Overlay2:      lipgloss.Color("#707070"),
-		Subtext0:      lipgloss.Color("#ffc799"),
-		Subtext1:      lipgloss.Color("#a0a0a0"),
-		Text:          lipgloss.Color("#ffffff"),
-		Lavender:      lipgloss.Color("#ffc799"),
-		Mauve:         lipgloss.Color("#e5a46b"),
-		Green:         lipgloss.Color("#9ece6a"),
-		Yellow:        lipgloss.Color("#ffc799"),
-		Peach:         lipgloss.Color("#ff9e64"),
-		Red:           lipgloss.Color("#ff5555"),
-		Blue:          lipgloss.Color("#ffc799"),
-		Teal:          lipgloss.Color("#7dcfff"),
-		DefaultBorder: lipgloss.DoubleBorder(),
+		Subtext0:      lipgloss.Color("#99FFE4"), // Menta / Aqua característico
+		Subtext1:      lipgloss.Color("#A0A0A0"), // Muted text
+		Text:          lipgloss.Color("#FFFFFF"), // Blanco puro
+		Lavender:      lipgloss.Color("#FFC799"), // Naranja / Ámbar principal
+		Mauve:         lipgloss.Color("#FFC799"), // Naranja acento
+		Green:         lipgloss.Color("#99FFE4"), // Menta / Aqua
+		Yellow:        lipgloss.Color("#FFD580"), // Ámbar suave
+		Peach:         lipgloss.Color("#FFC799"), // Naranja
+		Red:           lipgloss.Color("#FF8080"), // Rojo Vesper
+		Blue:          lipgloss.Color("#99FFE4"), // Menta / Aqua
+		Teal:          lipgloss.Color("#99FFE4"), // Menta / Aqua
+		DefaultBorder: lipgloss.RoundedBorder(),
 	}
 
 	KanagawaDragonPalette = ThemePalette{

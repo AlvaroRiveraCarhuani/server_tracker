@@ -58,9 +58,9 @@ var AvailableThemes = []ThemeMetadata{
 	{
 		ID:            "vesper",
 		Name:          "Vesper Dark",
-		Description:   "Minimalismo negro carbón #101010 con acentos ámbar refinados",
-		PreviewHex:    []string{"#101010", "#ffc799", "#e5a46b", "#ffffff", "#505050"},
-		DefaultBorder: "double",
+		Description:   "Fondo #101010 con acentos ámbar #FFC799, menta #99FFE4 y texto blanco (Rauno)",
+		PreviewHex:    []string{"#101010", "#FFC799", "#99FFE4", "#FF8080", "#FFFFFF"},
+		DefaultBorder: "rounded",
 	},
 	{
 		ID:            "kanagawa-dragon",

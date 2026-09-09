@@ -654,7 +654,10 @@ func TestTUI_ConfirmModalButtonUniformity(t *testing.T) {
 
 func TestTUI_ThemeModalWorkflow(t *testing.T) {
 	mockColl := &mockCollectorForTUI{}
-	model := NewModel(mockColl)
+	mockV := &mockVaultForTUI{
+		savedThemeConfig: domain.DefaultThemeConfig(),
+	}
+	model := NewModel(mockColl, mockV)
 	model.width = 100
 	model.height = 30
 
