@@ -23,8 +23,9 @@ const (
 
 // TriageClient realiza inferencia para diagnóstico pasivo de contenedores en falla.
 type TriageClient struct {
-	config domain.AIConfig
-	client *http.Client
+	config         domain.AIConfig
+	client         *http.Client
+	catalogService *CatalogService
 }
 
 // NewTriageClient inicializa el cliente con credenciales del entorno.
@@ -57,6 +58,11 @@ func NewTriageClientWithConfig(cfg domain.AIConfig) *TriageClient {
 	}
 }
 
+// SetCatalogService vincula el servicio de catálogo para registrar métricas observadas y resolver modo Auto.
+func (c *TriageClient) SetCatalogService(cs *CatalogService) {
+	c.catalogService = cs
+}
+
 // SetConfig actualiza la configuración de IA en caliente.
 func (c *TriageClient) SetConfig(cfg domain.AIConfig) {
 	c.config = cfg
@@ -78,6 +84,70 @@ func (c *TriageClient) DiagnoseContainer(ctx context.Context, name, image, statu
 // DiagnoseContainerWithUsage analiza logs y estado retornando el diagnóstico junto con el consumo de tokens y costo estimado.
 func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
 	provider := c.config.ActiveProvider
+	model := c.config.ActiveModel
+
+	// Dynamic resolution according to SelectionMode and SlotPolicy
+	if c.catalogService != nil {
+		switch c.config.SelectionMode {
+		case domain.SelectionAuto:
+			isSevere := strings.Contains(strings.ToLower(status), "oom") ||
+				strings.Contains(strings.ToLower(status), "exit") ||
+				strings.Contains(strings.ToLower(logs), "panic") ||
+				strings.Contains(strings.ToLower(logs), "segfault") ||
+				strings.Contains(strings.ToLower(logs), "fatal")
+
+			if isSevere {
+				m := domain.GetAssignedModel(domain.SlotDeep, c.config.SlotPolicy)
+				if m.ID != "" {
+					provider = m.ProviderID
+					model = m.ID
+				} else {
+					slotM, _ := c.catalogService.GetSlotDeep()
+					if slotM.ID != "" {
+						provider = slotM.ProviderID
+						model = slotM.ID
+					}
+				}
+			} else {
+				m := domain.GetAssignedModel(domain.SlotFast, c.config.SlotPolicy)
+				if m.ID != "" {
+					provider = m.ProviderID
+					model = m.ID
+				} else {
+					slotM, _ := c.catalogService.GetSlotFast()
+					if slotM.ID != "" {
+						provider = slotM.ProviderID
+						model = slotM.ID
+					}
+				}
+			}
+		case domain.SelectionFast:
+			m := domain.GetAssignedModel(domain.SlotFast, c.config.SlotPolicy)
+			if m.ID != "" {
+				provider = m.ProviderID
+				model = m.ID
+			} else {
+				slotM, _ := c.catalogService.GetSlotFast()
+				if slotM.ID != "" {
+					provider = slotM.ProviderID
+					model = slotM.ID
+				}
+			}
+		case domain.SelectionDeep:
+			m := domain.GetAssignedModel(domain.SlotDeep, c.config.SlotPolicy)
+			if m.ID != "" {
+				provider = m.ProviderID
+				model = m.ID
+			} else {
+				slotM, _ := c.catalogService.GetSlotDeep()
+				if slotM.ID != "" {
+					provider = slotM.ProviderID
+					model = slotM.ID
+				}
+			}
+		}
+	}
+
 	pConfig, ok := c.config.Providers[provider]
 	if !ok && provider != "" {
 		pConfig = domain.ProviderConfig{}
@@ -88,7 +158,6 @@ func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, ima
 		return fmt.Sprintf("Diagnóstico no configurado (%s no tiene API Key).", meta.Name), domain.TokenUsage{}
 	}
 
-	model := c.config.ActiveModel
 	if model == "" {
 		model = pConfig.DefaultModel
 	}
@@ -111,9 +180,13 @@ func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, ima
 
 	userPrompt := fmt.Sprintf("Contenedor: %s | Imagen: %s | Estado: %s\nLogs:\n%s", name, image, status, trimmedLogs)
 
+	start := time.Now()
+	var diagResult string
+	var usageResult domain.TokenUsage
+
 	switch provider {
 	case domain.ProviderAnthropic:
-		return c.callAnthropic(ctx, pConfig.APIKey, model, systemPrompt, userPrompt)
+		diagResult, usageResult = c.callAnthropic(ctx, pConfig.APIKey, model, systemPrompt, userPrompt)
 	case domain.ProviderOllama:
 		ep := pConfig.Endpoint
 		if ep == "" {
@@ -122,17 +195,41 @@ func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, ima
 		if !strings.HasSuffix(ep, "/api/chat") {
 			ep = strings.TrimSuffix(ep, "/") + "/api/chat"
 		}
-		return c.callOllama(ctx, ep, model, systemPrompt, userPrompt)
+		diagResult, usageResult = c.callOllama(ctx, ep, model, systemPrompt, userPrompt)
+	case domain.ProviderVLLM, domain.ProviderLMStudio, domain.ProviderCustom:
+		ep := pConfig.Endpoint
+		if ep == "" {
+			if provider == domain.ProviderVLLM {
+				ep = "http://localhost:8000/v1/chat/completions"
+			} else if provider == domain.ProviderLMStudio {
+				ep = "http://localhost:1234/v1/chat/completions"
+			} else {
+				ep = "http://localhost:8080/v1/chat/completions"
+			}
+		}
+		if !strings.HasSuffix(ep, "/chat/completions") {
+			ep = strings.TrimSuffix(ep, "/") + "/chat/completions"
+		}
+		diagResult, usageResult = c.callOpenAI(ctx, ep, pConfig.APIKey, model, systemPrompt, userPrompt, false)
 	case domain.ProviderOpenAI:
-		return c.callOpenAI(ctx, defaultOpenAIURL, pConfig.APIKey, model, systemPrompt, userPrompt, false)
+		diagResult, usageResult = c.callOpenAI(ctx, defaultOpenAIURL, pConfig.APIKey, model, systemPrompt, userPrompt, false)
 	default:
 		// OpenRouter o genérico compatible OpenAI
 		ep := defaultOpenRouterURL
 		if pConfig.Endpoint != "" {
 			ep = pConfig.Endpoint
 		}
-		return c.callOpenAI(ctx, ep, pConfig.APIKey, model, systemPrompt, userPrompt, true)
+		diagResult, usageResult = c.callOpenAI(ctx, ep, pConfig.APIKey, model, systemPrompt, userPrompt, true)
 	}
+
+	// Registrar métricas observadas de latencia y éxito
+	latency := time.Since(start)
+	if c.catalogService != nil && model != "" {
+		success := !strings.HasPrefix(diagResult, "Error") && !strings.HasPrefix(diagResult, "Diagnóstico no configurado")
+		c.catalogService.RecordInference(model, latency, success)
+	}
+
+	return diagResult, usageResult
 }
 
 func (c *TriageClient) callAnthropic(ctx context.Context, apiKey, model, systemPrompt, userPrompt string) (string, domain.TokenUsage) {
