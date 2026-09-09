@@ -1,13 +1,13 @@
 services:
   api:
-    build: .
+    build: ./server
     container_name: server_tracker-api
     ports:
       - "8000:8000"
     env_file:
       - .env
     volumes:
-      - .:/app
+      - ./server:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       db:
@@ -40,7 +40,7 @@ services:
         condition: service_healthy
 
   monitor:
-    build: .
+    build: ./server
     container_name: server_tracker-monitor
     command: python monitor.py 
     env_file:
@@ -48,7 +48,7 @@ services:
     environment:
       - API_URL=http://api:8000 
     volumes:
-      - .:/app
+      - ./server:/app
     depends_on:
       - api
 
