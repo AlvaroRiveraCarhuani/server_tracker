@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"context"
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -50,8 +50,5 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-// TriageService define el contrato para el análisis pasivo con IA y reporte de tokens.
-type TriageService interface {
-	DiagnoseContainer(ctx context.Context, name, image, status, logs string) string
-	DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage)
-}
+// TriageService define el contrato para el análisis pasivo con IA y reporte de tokens (alias a ports.TriagePort).
+type TriageService = ports.TriagePort

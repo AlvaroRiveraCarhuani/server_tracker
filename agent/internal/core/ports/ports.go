@@ -36,3 +36,9 @@ type BufferPort interface {
 type TransportPort interface {
 	Send(ctx context.Context, telemetry domain.HostTelemetry) error
 }
+
+// TriagePort define la interfaz para análisis y diagnóstico asistido por IA.
+type TriagePort interface {
+	DiagnoseContainer(ctx context.Context, name, image, status, logs string) string
+	DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage)
+}

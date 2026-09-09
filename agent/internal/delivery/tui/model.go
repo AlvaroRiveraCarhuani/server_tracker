@@ -9,6 +9,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/usecases"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -171,7 +172,8 @@ func (m Model) fetchMetrics() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		metrics, err := m.collector.Collect(ctx)
+		uc := usecases.NewCollectTelemetryUseCase(m.collector)
+		metrics, err := uc.Execute(ctx)
 		if err != nil {
 			return err
 		}
@@ -233,8 +235,9 @@ func (m Model) triggerTriageIfAnomalous(c domain.ContainerMetric) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 		defer cancel()
 
-		logs, _ := m.collector.GetContainerLogs(ctx, c.ID, 50)
-		diag, usage := m.triageClient.DiagnoseContainerWithUsage(ctx, c.Name, c.Image, c.Status, logs)
+		uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient)
+		diag, usage, _ := uc.Execute(ctx, c)
+
 		return diagnosisResultMsg{
 			containerID: c.ID,
 			diagnosis:   diag,
@@ -254,7 +257,9 @@ func (m Model) executeRemediation(c domain.ContainerMetric, action domain.Action
 			Action:      action,
 			Timestamp:   time.Now().Unix(),
 		}
-		err := m.collector.ExecuteRemediation(ctx, cmd)
+		uc := usecases.NewRemediateContainerUseCase(m.collector)
+		err := uc.Execute(ctx, cmd)
+
 		return remediationResultMsg{
 			action:        action,
 			containerName: c.Name,
