@@ -8,7 +8,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var sparkGlyphs = []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+var (
+	sparkGlyphs      = []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'} // U+2581 a U+2588
+	sparkGlyphsASCII = []rune{'.', ':', '-', '=', '+', '*', '#', '%'}
+)
 
 const maxHistorySamples = 30
 
@@ -107,7 +110,7 @@ func (h *MetricHistory) CalculateCPUTrend() TrendVector {
 }
 
 // RenderGradientBar dibuja una barra proporcional con gradiente térmico posicional estilo btop.
-// Segmentos: 0-60% verde, 60-80% durazno/amarillo, 80-100% rojo. Inactivo: ░ tenue.
+// Segmentos: 0-60% verde, 60-80% durazno/amarillo, 80-100% rojo. Inactivo: ░ tenue con contraste garantizado.
 func RenderGradientBar(current, limit float64, width int) string {
 	if width <= 0 {
 		return ""
@@ -131,7 +134,7 @@ func RenderGradientBar(current, limit float64, width int) string {
 	styleGreen := lipgloss.NewStyle().Foreground(ColorGreen)
 	stylePeach := lipgloss.NewStyle().Foreground(ColorPeach)
 	styleRed := lipgloss.NewStyle().Foreground(ColorRed)
-	styleDim := lipgloss.NewStyle().Foreground(ColorSurface1)
+	styleDim := lipgloss.NewStyle().Foreground(ColorOverlay0)
 
 	var b strings.Builder
 	b.WriteString("[")
@@ -186,8 +189,13 @@ func RenderSparkline(values []float64, minVal, maxVal float64, maxPoints int) st
 		}
 	}
 
+	glyphs := sparkGlyphs
+	if !NerdFontsMode {
+		glyphs = sparkGlyphsASCII
+	}
+	numGlyphs := len(glyphs)
+
 	var b strings.Builder
-	numGlyphs := len(sparkGlyphs)
 
 	for _, v := range samples {
 		clamped := v
@@ -213,7 +221,7 @@ func RenderSparkline(values []float64, minVal, maxVal float64, maxPoints int) st
 			style = StyleSparklineWarning
 		}
 
-		b.WriteString(style.Render(string(sparkGlyphs[glyphIdx])))
+		b.WriteString(style.Render(string(glyphs[glyphIdx])))
 	}
 
 	return b.String()
