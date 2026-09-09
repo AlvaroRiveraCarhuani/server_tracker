@@ -147,13 +147,19 @@ func (m Model) viewTable() string {
 				glyph, _, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
 				tech := DetectTechnology(c.Image, c.Name)
 
-				prefix := "  "
-				if i == m.cursor {
-					prefix = "> "
-				}
-
 				nameStr := truncate(c.Name, nameW)
 				namePadded := fmt.Sprintf("%-*s", nameW, nameStr)
+
+				var nameStyled string
+				var prefixStyled string
+				if i == m.cursor {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
+					nameStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(namePadded)
+				} else {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
+					nameStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(namePadded)
+				}
+
 				cpuStr := fmt.Sprintf("%3.0f%%", c.CPUPercent)
 
 				var cpuStyled string
@@ -170,7 +176,7 @@ func (m Model) viewTable() string {
 					techGlyph = "*"
 				}
 				techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(techGlyph)
-				rowLine := fmt.Sprintf("%s%s %s %s %s", prefix, statusStyle.Render(glyph), techGlyphStyled, namePadded, cpuStyled)
+				rowLine := fmt.Sprintf("%s%s %s %s %s", prefixStyled, statusStyle.Render(glyph), techGlyphStyled, nameStyled, cpuStyled)
 
 				if i == m.cursor {
 					leftContent.WriteString(StyleRowFocus.Width(innerLeftW).Render(rowLine) + "\n")
@@ -259,11 +265,17 @@ func (m Model) viewTable() string {
 		b.WriteString(StyleHeader.Render(headers) + "\n")
 		for i, c := range filtered {
 			glyph, statusText, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
-			prefix := "  "
+			var prefixStyled, idStyled, nameStyled string
 			if i == m.cursor {
-				prefix = "> "
+				prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
+				idStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(fmt.Sprintf("%-14s", c.ID))
+				nameStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(fmt.Sprintf("%-20s", truncate(c.Name, 18)))
+			} else {
+				prefixStyled = "  "
+				idStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(fmt.Sprintf("%-14s", c.ID))
+				nameStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(fmt.Sprintf("%-20s", truncate(c.Name, 18)))
 			}
-			line := fmt.Sprintf("%s%-14s %-20s %s", prefix, c.ID, truncate(c.Name, 18), statusStyle.Render(fmt.Sprintf("%s %s", glyph, statusText)))
+			line := fmt.Sprintf("%s%s %s %s", prefixStyled, idStyled, nameStyled, statusStyle.Render(fmt.Sprintf("%s %s", glyph, statusText)))
 			if i == m.cursor {
 				b.WriteString(StyleRowFocus.Render(line) + "\n")
 			} else {
