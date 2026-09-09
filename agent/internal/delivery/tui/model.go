@@ -52,6 +52,9 @@ type Model struct {
 	themeConfig     domain.ThemeConfig
 	themeListCursor int
 
+	// Contenedores fijados (Pinning prioritario)
+	pinnedContainers map[string]bool
+
 	viewport         viewport.Model
 	selectedName     string
 	selectedID       string
@@ -159,6 +162,17 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		}
 	}
 
+	pinnedMap := make(map[string]bool)
+	if vaultSvc != nil {
+		if pinned, err := vaultSvc.GetPinnedContainers(); err == nil && pinned != nil {
+			for _, name := range pinned {
+				if name != "" {
+					pinnedMap[name] = true
+				}
+			}
+		}
+	}
+
 	return Model{
 		collector:          collector,
 		vaultService:       vaultSvc,
@@ -167,6 +181,7 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		lastDiagnosisUsage: make(map[string]domain.TokenUsage),
 		triagePending:      make(map[string]bool),
 		metricsHistory:     make(map[string]*MetricHistory),
+		pinnedContainers:   pinnedMap,
 		cursor:             0,
 		activeState:        stateFleetTable,
 		filterInput:        ti,
@@ -218,18 +233,70 @@ func (m Model) fetchLogs(containerID, containerName string) tea.Cmd {
 	}
 }
 
-func (m Model) filteredMetrics() []domain.ContainerMetric {
-	if m.filterValue == "" {
-		return m.metrics
+func (m Model) isPinned(name string) bool {
+	if m.pinnedContainers == nil {
+		return false
 	}
-	var filtered []domain.ContainerMetric
-	query := strings.ToLower(m.filterValue)
-	for _, c := range m.metrics {
-		if strings.Contains(strings.ToLower(c.Name), query) || strings.Contains(strings.ToLower(c.Image), query) {
-			filtered = append(filtered, c)
+	return m.pinnedContainers[name]
+}
+
+func (m *Model) togglePin(name string) {
+	if m.pinnedContainers == nil {
+		m.pinnedContainers = make(map[string]bool)
+	}
+	if m.pinnedContainers[name] {
+		delete(m.pinnedContainers, name)
+	} else {
+		m.pinnedContainers[name] = true
+	}
+	m.savePinnedToVault()
+}
+
+func (m *Model) clearAllPins() {
+	m.pinnedContainers = make(map[string]bool)
+	m.savePinnedToVault()
+}
+
+func (m *Model) savePinnedToVault() {
+	if m.vaultService == nil {
+		return
+	}
+	var names []string
+	for n := range m.pinnedContainers {
+		names = append(names, n)
+	}
+	_ = m.vaultService.SavePinnedContainers(names)
+}
+
+func (m Model) filteredMetrics() []domain.ContainerMetric {
+	var candidates []domain.ContainerMetric
+	if m.filterValue == "" {
+		candidates = m.metrics
+	} else {
+		query := strings.ToLower(m.filterValue)
+		for _, c := range m.metrics {
+			if strings.Contains(strings.ToLower(c.Name), query) || strings.Contains(strings.ToLower(c.Image), query) {
+				candidates = append(candidates, c)
+			}
 		}
 	}
-	return filtered
+
+	if len(m.pinnedContainers) == 0 {
+		return candidates
+	}
+
+	var pinned []domain.ContainerMetric
+	var unpinned []domain.ContainerMetric
+
+	for _, c := range candidates {
+		if m.pinnedContainers[c.Name] {
+			pinned = append(pinned, c)
+		} else {
+			unpinned = append(unpinned, c)
+		}
+	}
+
+	return append(pinned, unpinned...)
 }
 
 func (m Model) isAnomalous(c domain.ContainerMetric) bool {

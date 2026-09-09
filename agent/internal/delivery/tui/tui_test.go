@@ -357,7 +357,8 @@ type mockVaultForTUI struct {
 	savedToken       string
 	savedKey         string
 	savedAIConfig    domain.AIConfig
-	savedThemeConfig domain.ThemeConfig
+	savedThemeConfig    domain.ThemeConfig
+	savedPinnedContainers []string
 }
 
 func (m *mockVaultForTUI) Save(serverURL, secretToken string) error {
@@ -410,6 +411,15 @@ func (m *mockVaultForTUI) GetThemeConfig() (domain.ThemeConfig, error) {
 		return m.savedThemeConfig, nil
 	}
 	return domain.DefaultThemeConfig(), nil
+}
+
+func (m *mockVaultForTUI) SavePinnedContainers(names []string) error {
+	m.savedPinnedContainers = names
+	return nil
+}
+
+func (m *mockVaultForTUI) GetPinnedContainers() ([]string, error) {
+	return m.savedPinnedContainers, nil
 }
 
 func TestTUI_ConfigModalWorkflow(t *testing.T) {
@@ -704,6 +714,65 @@ func TestTUI_ThemeModalWorkflow(t *testing.T) {
 	}
 	if mod.themeConfig.ActiveTheme != "catppuccin" {
 		t.Errorf("expected active theme 'catppuccin', got %s", mod.themeConfig.ActiveTheme)
+	}
+}
+
+func TestTUI_ContainerPinningWorkflow(t *testing.T) {
+	mockColl := &mockCollectorForTUI{
+		metrics: []domain.ContainerMetric{
+			{ID: "c1", Name: "alpha_service", Status: "running", CPUPercent: 5.0},
+			{ID: "c2", Name: "beta_database", Status: "running", CPUPercent: 12.0},
+			{ID: "c3", Name: "gamma_cache", Status: "running", CPUPercent: 2.0},
+		},
+	}
+	mockV := &mockVaultForTUI{
+		savedThemeConfig: domain.DefaultThemeConfig(),
+	}
+	model := NewModel(mockColl, mockV)
+	model.metrics = mockColl.metrics
+	model.width = 100
+	model.height = 30
+
+	// 1. Verificar lista inicial (orden natural: alpha, beta, gamma)
+	initList := model.filteredMetrics()
+	if len(initList) != 3 || initList[0].Name != "alpha_service" {
+		t.Fatalf("expected alpha_service first in initial list, got %s", initList[0].Name)
+	}
+
+	// 2. Mover cursor a gamma_cache (cursor = 2) y presionar 'p' para fijar
+	model.cursor = 2
+	m1, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	mod := m1.(Model)
+
+	if !mod.isPinned("gamma_cache") {
+		t.Errorf("expected gamma_cache to be pinned")
+	}
+
+	// 3. Verificar que gamma_cache ahora es la PRIMERA en filteredMetrics
+	pinnedList := mod.filteredMetrics()
+	if pinnedList[0].Name != "gamma_cache" {
+		t.Errorf("expected pinned container 'gamma_cache' to be at index 0, got %s", pinnedList[0].Name)
+	}
+
+	// 4. Renderizar vista y comprobar que el header y badges reflejan FIJADOS
+	view := mod.View()
+	if !strings.Contains(view, "FIJADOS (1)") {
+		t.Errorf("expected view to contain 'FIJADOS (1)', got:\n%s", view)
+	}
+	if !strings.Contains(view, "FIJADO") {
+		t.Errorf("expected detail view to contain 'FIJADO' badge, got:\n%s", view)
+	}
+
+	// 5. Presionar 'P' (Shift+P) para desanclar todos los contenedores
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	mod2 := m2.(Model)
+
+	if mod2.isPinned("gamma_cache") {
+		t.Errorf("expected gamma_cache to be unpinned after Shift+P")
+	}
+	clearedList := mod2.filteredMetrics()
+	if clearedList[0].Name != "alpha_service" {
+		t.Errorf("expected alpha_service to be first again after clearing pins, got %s", clearedList[0].Name)
 	}
 }
 

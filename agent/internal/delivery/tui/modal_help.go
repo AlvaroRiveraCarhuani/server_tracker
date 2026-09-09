@@ -29,6 +29,8 @@ func (m Model) viewHelp() string {
 	leftCol.WriteString(sectionTitle.Render("Navegación") + "\n")
 	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("↑ / k"), descStyle.Render("Subir")))
 	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("↓ / j"), descStyle.Render("Bajar")))
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("p"), descStyle.Render("Fijar / Desanclar")))
+	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("P"), descStyle.Render("Limpiar fijados")))
 	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("Enter / l"), descStyle.Render("Ver logs")))
 	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n\n", keyStyle.Render("/"), descStyle.Render("Buscar / Filtrar")))
 

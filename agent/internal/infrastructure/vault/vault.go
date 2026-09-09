@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
@@ -29,11 +30,12 @@ var (
 )
 
 type credentialsPayload struct {
-	ServerURL     string              `json:"server_url"`
-	SecretToken   string              `json:"secret_token"`
-	OpenRouterKey string              `json:"openrouter_key,omitempty"`
-	AIConfig      *domain.AIConfig    `json:"ai_config,omitempty"`
-	ThemeConfig   *domain.ThemeConfig `json:"theme_config,omitempty"`
+	ServerURL        string              `json:"server_url"`
+	SecretToken      string              `json:"secret_token"`
+	OpenRouterKey    string              `json:"openrouter_key,omitempty"`
+	AIConfig         *domain.AIConfig    `json:"ai_config,omitempty"`
+	ThemeConfig      *domain.ThemeConfig `json:"theme_config,omitempty"`
+	PinnedContainers []string            `json:"pinned_containers,omitempty"`
 }
 
 // FileVault implementa ports.VaultPort guardando credenciales cifradas con AES-256-GCM + Argon2id.
@@ -222,6 +224,20 @@ func (v *FileVault) GetThemeConfig() (domain.ThemeConfig, error) {
 	return domain.DefaultThemeConfig(), nil
 }
 
+func (v *FileVault) SavePinnedContainers(names []string) error {
+	creds, _ := v.readPayload()
+	creds.PinnedContainers = names
+	return v.writePayload(creds)
+}
+
+func (v *FileVault) GetPinnedContainers() ([]string, error) {
+	creds, err := v.readPayload()
+	if err != nil {
+		return nil, err
+	}
+	return creds.PinnedContainers, nil
+}
+
 // KeyringVault implementa ports.VaultPort usando el Keyring nativo del SO.
 type KeyringVault struct{}
 
@@ -307,6 +323,25 @@ func (k *KeyringVault) GetThemeConfig() (domain.ThemeConfig, error) {
 		}
 	}
 	return domain.DefaultThemeConfig(), ErrCredentialsNotFound
+}
+
+func (k *KeyringVault) SavePinnedContainers(names []string) error {
+	bytes, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	return keyring.Set(ServiceName, "pinned_containers", string(bytes))
+}
+
+func (k *KeyringVault) GetPinnedContainers() ([]string, error) {
+	data, err := keyring.Get(ServiceName, "pinned_containers")
+	if err == nil && data != "" {
+		var names []string
+		if err := json.Unmarshal([]byte(data), &names); err == nil {
+			return names, nil
+		}
+	}
+	return nil, ErrCredentialsNotFound
 }
 
 // EnvVault implementa ports.VaultPort leyendo variables de entorno para CI/CD.
@@ -432,6 +467,26 @@ func (e *EnvVault) GetThemeConfig() (domain.ThemeConfig, error) {
 	return cfg, nil
 }
 
+func (e *EnvVault) SavePinnedContainers(names []string) error {
+	return errors.New("no se admite escritura en variables de entorno")
+}
+
+func (e *EnvVault) GetPinnedContainers() ([]string, error) {
+	pinned := os.Getenv("SOLV_PINNED_CONTAINERS")
+	if pinned == "" {
+		return nil, ErrCredentialsNotFound
+	}
+	parts := strings.Split(pinned, ",")
+	var cleaned []string
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			cleaned = append(cleaned, t)
+		}
+	}
+	return cleaned, nil
+}
+
 // CascadeVault implementa ports.VaultPort intentando en orden: Keyring -> Archivo cifrado -> Env vars.
 type CascadeVault struct {
 	keyring   *KeyringVault
@@ -540,5 +595,26 @@ func (c *CascadeVault) GetThemeConfig() (domain.ThemeConfig, error) {
 		return cfg, nil
 	}
 	return domain.DefaultThemeConfig(), nil
+}
+
+func (c *CascadeVault) SavePinnedContainers(names []string) error {
+	err := c.keyring.SavePinnedContainers(names)
+	if err == nil {
+		return nil
+	}
+	return c.fileVault.SavePinnedContainers(names)
+}
+
+func (c *CascadeVault) GetPinnedContainers() ([]string, error) {
+	if names, err := c.keyring.GetPinnedContainers(); err == nil && names != nil {
+		return names, nil
+	}
+	if names, err := c.fileVault.GetPinnedContainers(); err == nil && names != nil {
+		return names, nil
+	}
+	if names, err := c.envVault.GetPinnedContainers(); err == nil && names != nil {
+		return names, nil
+	}
+	return nil, nil
 }
 

@@ -219,3 +219,31 @@ func TestVault_ThemeConfigPersistence(t *testing.T) {
 		t.Errorf("ThemeConfig recuperado incorrecto: %+v", got)
 	}
 }
+
+func TestVault_PinnedContainersPersistence(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_pinned_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	passphrase := "master_pinned_key_789"
+
+	v := vault.NewFileVault(filePath, passphrase)
+
+	pinned := []string{"solv_db", "server_tracker_traefik", "redis_cache"}
+
+	if err := v.SavePinnedContainers(pinned); err != nil {
+		t.Fatalf("error guardando PinnedContainers: %v", err)
+	}
+
+	got, err := v.GetPinnedContainers()
+	if err != nil {
+		t.Fatalf("error recuperando PinnedContainers: %v", err)
+	}
+
+	if len(got) != 3 || got[0] != "solv_db" || got[1] != "server_tracker_traefik" || got[2] != "redis_cache" {
+		t.Errorf("PinnedContainers recuperados incorrectos: %+v", got)
+	}
+}

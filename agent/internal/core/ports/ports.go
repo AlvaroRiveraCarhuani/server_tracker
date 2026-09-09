@@ -23,6 +23,8 @@ type VaultPort interface {
 	GetAIConfig() (domain.AIConfig, error)
 	SaveThemeConfig(cfg domain.ThemeConfig) error
 	GetThemeConfig() (domain.ThemeConfig, error)
+	SavePinnedContainers(names []string) error
+	GetPinnedContainers() ([]string, error)
 }
 
 

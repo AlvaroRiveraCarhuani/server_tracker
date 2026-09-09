@@ -463,6 +463,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
+			case "p":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					c := filtered[m.cursor]
+					m.togglePin(c.Name)
+					if m.isPinned(c.Name) {
+						m.statusMessage = fmt.Sprintf("[📌] Contenedor '%s' fijado al inicio de la flota", c.Name)
+					} else {
+						m.statusMessage = fmt.Sprintf("[-] Contenedor '%s' desanclado", c.Name)
+					}
+					m.statusExpiry = time.Now().Add(3 * time.Second)
+					return m, nil
+				}
+
+			case "P":
+				if len(m.pinnedContainers) > 0 {
+					m.clearAllPins()
+					m.statusMessage = "[✔] Todos los contenedores desanclados"
+					m.statusExpiry = time.Now().Add(3 * time.Second)
+					return m, nil
+				}
+
 			case "r":
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.pendingContainer = filtered[m.cursor]

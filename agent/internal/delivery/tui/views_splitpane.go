@@ -126,11 +126,26 @@ func (m Model) viewTable() string {
 			start = max(0, end-maxVisibleRows)
 		}
 
+		numPinned := 0
+		for _, c := range filtered {
+			if m.isPinned(c.Name) {
+				numPinned++
+			}
+		}
+
 		var leftHeader string
-		if total > maxVisibleRows {
-			leftHeader = fmt.Sprintf("CONTENEDORES (%d) • %d-%d", total, start+1, end)
+		if numPinned > 0 {
+			if total > maxVisibleRows {
+				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • FIJADOS (%d) • %d-%d", total, numPinned, start+1, end)
+			} else {
+				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • FIJADOS (%d)", total, numPinned)
+			}
 		} else {
-			leftHeader = fmt.Sprintf("CONTENEDORES (%d)", total)
+			if total > maxVisibleRows {
+				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • %d-%d", total, start+1, end)
+			} else {
+				leftHeader = fmt.Sprintf("CONTENEDORES (%d)", total)
+			}
 		}
 		leftContent.WriteString(StyleCardTitle.Render(leftHeader) + "\n\n")
 
@@ -146,17 +161,36 @@ func (m Model) viewTable() string {
 				c := filtered[i]
 				glyph, _, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
 				tech := DetectTechnology(c.Image, c.Name)
+				pinned := m.isPinned(c.Name)
 
 				nameStr := truncate(c.Name, nameW)
 				namePadded := fmt.Sprintf("%-*s", nameW, nameStr)
 
 				var nameStyled string
 				var prefixStyled string
+
+				pinIcon := " "
+				if pinned {
+					if NerdFontsMode {
+						pinIcon = "📌"
+					} else {
+						pinIcon = "^"
+					}
+				}
+
 				if i == m.cursor {
-					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
+					if pinned {
+						prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">" + pinIcon)
+					} else {
+						prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
+					}
 					nameStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(namePadded)
 				} else {
-					prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
+					if pinned {
+						prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(" " + pinIcon)
+					} else {
+						prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
+					}
 					nameStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(namePadded)
 				}
 
@@ -196,8 +230,17 @@ func (m Model) viewTable() string {
 			_, statusText, statusStyle := FormatStatus(sel.Status, sel.RAMBytes, sel.RAMLimitBytes)
 			statusBadge := statusStyle.Render(fmt.Sprintf("[%s]", statusText))
 
+			pinnedBadge := ""
+			if m.isPinned(sel.Name) {
+				if NerdFontsMode {
+					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[📌 FIJADO]")
+				} else {
+					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[^ FIJADO]")
+				}
+			}
+
 			// Header del contenedor
-			headerLine := fmt.Sprintf("%s  %s  %s", tech.Badge(), lipgloss.NewStyle().Bold(true).Foreground(ColorText).Render(sel.Name), statusBadge)
+			headerLine := fmt.Sprintf("%s  %s  %s%s", tech.Badge(), lipgloss.NewStyle().Bold(true).Foreground(ColorText).Render(sel.Name), statusBadge, pinnedBadge)
 			rightContent.WriteString(headerLine + "\n")
 
 			subInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  Imagen: %s  |  ID: %s  |  Categoría: %s", sel.Image, sel.ID, tech.Category))
@@ -252,7 +295,7 @@ func (m Model) viewTable() string {
 
 			// Sección de Acciones Rápidas
 			rightContent.WriteString(StyleCardTitle.Render("ACCIONES DISPONIBLES:") + "\n")
-			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  [l/Enter] Logs en vivo    •  [e] Shell interactiva\n  [r] Restart  •  [s] Stop  •  [x] Aislar Red\n"))
+			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  [l/Enter] Logs en vivo    •  [e] Shell interactiva\n  [p] Fijar / Desanclar     •  [P] Limpiar fijados\n  [r] Restart  •  [s] Stop  •  [x] Aislar Red\n"))
 		} else {
 			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Selecciona un contenedor de la lista izquierda."))
 		}
@@ -321,7 +364,7 @@ func (m Model) viewTable() string {
 			if m.sessionTokensUsed > 0 {
 				aiStatsTag = fmt.Sprintf("  |  󰚩 %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
 			}
-			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [c]: Modelo IA  |  [t]: Temas  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
+			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
 			b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 		}
 	}
