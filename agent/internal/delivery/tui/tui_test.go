@@ -353,10 +353,11 @@ func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
 }
 
 type mockVaultForTUI struct {
-	savedURL      string
-	savedToken    string
-	savedKey      string
-	savedAIConfig domain.AIConfig
+	savedURL         string
+	savedToken       string
+	savedKey         string
+	savedAIConfig    domain.AIConfig
+	savedThemeConfig domain.ThemeConfig
 }
 
 func (m *mockVaultForTUI) Save(serverURL, secretToken string) error {
@@ -397,6 +398,18 @@ func (m *mockVaultForTUI) GetAIConfig() (domain.AIConfig, error) {
 		cfg.Providers[domain.ProviderOpenRouter] = p
 	}
 	return cfg, nil
+}
+
+func (m *mockVaultForTUI) SaveThemeConfig(cfg domain.ThemeConfig) error {
+	m.savedThemeConfig = cfg
+	return nil
+}
+
+func (m *mockVaultForTUI) GetThemeConfig() (domain.ThemeConfig, error) {
+	if m.savedThemeConfig.ActiveTheme != "" {
+		return m.savedThemeConfig, nil
+	}
+	return domain.DefaultThemeConfig(), nil
 }
 
 func TestTUI_ConfigModalWorkflow(t *testing.T) {
@@ -636,6 +649,58 @@ func TestTUI_ConfirmModalButtonUniformity(t *testing.T) {
 				t.Errorf("expected modal line width to be exactly 72 columns, got %d for line %q", w, l)
 			}
 		}
+	}
+}
+
+func TestTUI_ThemeModalWorkflow(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	model := NewModel(mockColl)
+	model.width = 100
+	model.height = 30
+
+	// 1. Abrir modal con 't'
+	m1, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	mod := m1.(Model)
+	if mod.activeState != stateThemeModal {
+		t.Fatalf("expected stateThemeModal after pressing 't', got %v", mod.activeState)
+	}
+
+	// 2. Renderizar vista modal
+	view := mod.View()
+	if !strings.Contains(view, "Seleccionar Tema") {
+		t.Errorf("expected theme selector title in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Tokyo Night") || !strings.Contains(view, "Catppuccin") || !strings.Contains(view, "Gruvbox") {
+		t.Errorf("expected available themes in view, got:\n%s", view)
+	}
+
+	// 3. Navegar con 'j' y seleccionar 'Catppuccin Mocha'
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	mod = m2.(Model)
+	if mod.themeListCursor != 1 {
+		t.Errorf("expected theme cursor at 1, got %d", mod.themeListCursor)
+	}
+
+	// 4. Alternar Nerd Fonts con 'f'
+	initialNerd := mod.themeConfig.NerdFonts
+	m3, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	mod = m3.(Model)
+	if mod.themeConfig.NerdFonts == initialNerd {
+		t.Errorf("expected NerdFonts toggled")
+	}
+
+	// 5. Alternar Bordes con 'b'
+	m4, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	mod = m4.(Model)
+
+	// 6. Enter para confirmar selección
+	m5, _ := mod.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mod = m5.(Model)
+	if mod.activeState != stateFleetTable {
+		t.Errorf("expected stateFleetTable after applying theme, got %v", mod.activeState)
+	}
+	if mod.themeConfig.ActiveTheme != "catppuccin" {
+		t.Errorf("expected active theme 'catppuccin', got %s", mod.themeConfig.ActiveTheme)
 	}
 }
 

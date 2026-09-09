@@ -17,6 +17,7 @@ const (
 	stateConfirmRemediation
 	stateConfigModal
 	stateHelp
+	stateThemeModal
 )
 
 type tickMsg time.Time

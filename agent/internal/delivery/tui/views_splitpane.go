@@ -32,6 +32,10 @@ func (m Model) View() string {
 		return overlayModal(baseView, m.viewConfigModal(), m.width, m.height)
 	}
 
+	if m.activeState == stateThemeModal {
+		return overlayModal(baseView, m.viewThemeModal(), m.width, m.height)
+	}
+
 	return baseView
 }
 
@@ -161,7 +165,11 @@ func (m Model) viewTable() string {
 					cpuStyled = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(cpuStr)
 				}
 
-				techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(tech.NerdGlyph)
+				techGlyph := tech.NerdGlyph
+				if !NerdFontsMode {
+					techGlyph = "*"
+				}
+				techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(techGlyph)
 				rowLine := fmt.Sprintf("%s%s %s %s %s", prefix, statusStyle.Render(glyph), techGlyphStyled, namePadded, cpuStyled)
 
 				if i == m.cursor {
@@ -301,7 +309,7 @@ func (m Model) viewTable() string {
 			if m.sessionTokensUsed > 0 {
 				aiStatsTag = fmt.Sprintf("  |  󰚩 %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
 			}
-			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [c]: Modelo IA  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
+			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [x]: Aislar  |  [c]: Modelo IA  |  [t]: Temas  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
 			b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
 		}
 	}

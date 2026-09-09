@@ -29,10 +29,11 @@ var (
 )
 
 type credentialsPayload struct {
-	ServerURL     string           `json:"server_url"`
-	SecretToken   string           `json:"secret_token"`
-	OpenRouterKey string           `json:"openrouter_key,omitempty"`
-	AIConfig      *domain.AIConfig `json:"ai_config,omitempty"`
+	ServerURL     string              `json:"server_url"`
+	SecretToken   string              `json:"secret_token"`
+	OpenRouterKey string              `json:"openrouter_key,omitempty"`
+	AIConfig      *domain.AIConfig    `json:"ai_config,omitempty"`
+	ThemeConfig   *domain.ThemeConfig `json:"theme_config,omitempty"`
 }
 
 // FileVault implementa ports.VaultPort guardando credenciales cifradas con AES-256-GCM + Argon2id.
@@ -204,6 +205,23 @@ func (v *FileVault) GetAIConfig() (domain.AIConfig, error) {
 	return cfg, nil
 }
 
+func (v *FileVault) SaveThemeConfig(cfg domain.ThemeConfig) error {
+	creds, _ := v.readPayload()
+	creds.ThemeConfig = &cfg
+	return v.writePayload(creds)
+}
+
+func (v *FileVault) GetThemeConfig() (domain.ThemeConfig, error) {
+	creds, err := v.readPayload()
+	if err != nil {
+		return domain.DefaultThemeConfig(), err
+	}
+	if creds.ThemeConfig != nil {
+		return *creds.ThemeConfig, nil
+	}
+	return domain.DefaultThemeConfig(), nil
+}
+
 // KeyringVault implementa ports.VaultPort usando el Keyring nativo del SO.
 type KeyringVault struct{}
 
@@ -270,6 +288,25 @@ func (k *KeyringVault) GetAIConfig() (domain.AIConfig, error) {
 		return cfg, nil
 	}
 	return domain.DefaultAIConfig(), ErrCredentialsNotFound
+}
+
+func (k *KeyringVault) SaveThemeConfig(cfg domain.ThemeConfig) error {
+	bytes, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return keyring.Set(ServiceName, "theme_config", string(bytes))
+}
+
+func (k *KeyringVault) GetThemeConfig() (domain.ThemeConfig, error) {
+	data, err := keyring.Get(ServiceName, "theme_config")
+	if err == nil && data != "" {
+		var cfg domain.ThemeConfig
+		if err := json.Unmarshal([]byte(data), &cfg); err == nil {
+			return cfg, nil
+		}
+	}
+	return domain.DefaultThemeConfig(), ErrCredentialsNotFound
 }
 
 // EnvVault implementa ports.VaultPort leyendo variables de entorno para CI/CD.
@@ -378,6 +415,23 @@ func (e *EnvVault) GetAIConfig() (domain.AIConfig, error) {
 	return cfg, nil
 }
 
+func (e *EnvVault) SaveThemeConfig(cfg domain.ThemeConfig) error {
+	return errors.New("no se admite escritura en variables de entorno")
+}
+
+func (e *EnvVault) GetThemeConfig() (domain.ThemeConfig, error) {
+	theme := os.Getenv("SOLV_THEME")
+	if theme == "" {
+		return domain.DefaultThemeConfig(), ErrCredentialsNotFound
+	}
+	cfg := domain.DefaultThemeConfig()
+	cfg.ActiveTheme = theme
+	if os.Getenv("SOLV_NERD_FONTS") == "false" || os.Getenv("SOLV_NERD_FONTS") == "0" {
+		cfg.NerdFonts = false
+	}
+	return cfg, nil
+}
+
 // CascadeVault implementa ports.VaultPort intentando en orden: Keyring -> Archivo cifrado -> Env vars.
 type CascadeVault struct {
 	keyring   *KeyringVault
@@ -465,5 +519,26 @@ func (c *CascadeVault) GetAIConfig() (domain.AIConfig, error) {
 		return cfg, nil
 	}
 	return domain.DefaultAIConfig(), ErrCredentialsNotFound
+}
+
+func (c *CascadeVault) SaveThemeConfig(cfg domain.ThemeConfig) error {
+	err := c.keyring.SaveThemeConfig(cfg)
+	if err == nil {
+		return nil
+	}
+	return c.fileVault.SaveThemeConfig(cfg)
+}
+
+func (c *CascadeVault) GetThemeConfig() (domain.ThemeConfig, error) {
+	if cfg, err := c.keyring.GetThemeConfig(); err == nil && cfg.ActiveTheme != "" {
+		return cfg, nil
+	}
+	if cfg, err := c.fileVault.GetThemeConfig(); err == nil && cfg.ActiveTheme != "" {
+		return cfg, nil
+	}
+	if cfg, err := c.envVault.GetThemeConfig(); err == nil && cfg.ActiveTheme != "" {
+		return cfg, nil
+	}
+	return domain.DefaultThemeConfig(), nil
 }
 

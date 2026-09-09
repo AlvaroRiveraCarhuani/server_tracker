@@ -187,3 +187,35 @@ func TestVault_OpenRouterKeyPersistence(t *testing.T) {
 		t.Fatalf("la API Key debio persistir tras guardar credenciales: %v", err)
 	}
 }
+
+func TestVault_ThemeConfigPersistence(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_theme_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	passphrase := "master_theme_key_456"
+
+	v := vault.NewFileVault(filePath, passphrase)
+
+	cfg := domain.ThemeConfig{
+		ActiveTheme: "nord",
+		NerdFonts:   false,
+		BorderStyle: "rounded",
+	}
+
+	if err := v.SaveThemeConfig(cfg); err != nil {
+		t.Fatalf("error guardando ThemeConfig: %v", err)
+	}
+
+	got, err := v.GetThemeConfig()
+	if err != nil {
+		t.Fatalf("error recuperando ThemeConfig: %v", err)
+	}
+
+	if got.ActiveTheme != "nord" || got.NerdFonts != false || got.BorderStyle != "rounded" {
+		t.Errorf("ThemeConfig recuperado incorrecto: %+v", got)
+	}
+}

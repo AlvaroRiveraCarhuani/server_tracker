@@ -45,6 +45,7 @@ func (m Model) viewHelp() string {
 	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n\n", keyStyle.Render("e"), descStyle.Render("Abrir terminal")))
 
 	rightCol.WriteString(sectionTitle.Render("General") + "\n")
+	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("t"), descStyle.Render("Temas y estilos")))
 	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("?"), descStyle.Render("Ver esta ayuda")))
 	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("q / Esc"), descStyle.Render("Cerrar / Salir")))
 

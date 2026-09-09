@@ -21,6 +21,8 @@ type VaultPort interface {
 	GetOpenRouterKey() (string, error)
 	SaveAIConfig(cfg domain.AIConfig) error
 	GetAIConfig() (domain.AIConfig, error)
+	SaveThemeConfig(cfg domain.ThemeConfig) error
+	GetThemeConfig() (domain.ThemeConfig, error)
 }
 
 

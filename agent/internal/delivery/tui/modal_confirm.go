@@ -26,7 +26,7 @@ func (m Model) viewConfirmModal() string {
 	idLine := fmt.Sprintf("ID         : %s", lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(m.pendingContainer.ID))
 
 	btnBase := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(lipgloss.DoubleBorder()).
 		BorderBackground(ColorSurface0).
 		Width(24).
 		Align(lipgloss.Center)

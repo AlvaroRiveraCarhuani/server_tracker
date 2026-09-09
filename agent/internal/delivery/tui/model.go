@@ -48,6 +48,10 @@ type Model struct {
 	sessionTokensUsed int
 	sessionCostUSD    float64
 
+	// Estado del Selector de Temas y Tipografía
+	themeConfig     domain.ThemeConfig
+	themeListCursor int
+
 	viewport         viewport.Model
 	selectedName     string
 	selectedID       string
@@ -121,21 +125,38 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	}
 
 	var aiCfg domain.AIConfig
+	var themeCfg domain.ThemeConfig
 	if vaultSvc != nil {
 		if c, err := vaultSvc.GetAIConfig(); err == nil {
 			aiCfg = c
 		} else {
 			aiCfg = domain.DefaultAIConfig()
 		}
+		if t, err := vaultSvc.GetThemeConfig(); err == nil {
+			themeCfg = t
+		} else {
+			themeCfg = domain.DefaultThemeConfig()
+		}
 	} else {
 		aiCfg = domain.DefaultAIConfig()
+		themeCfg = domain.DefaultThemeConfig()
 	}
+
+	ApplyTheme(themeCfg.ActiveTheme, themeCfg.BorderStyle, themeCfg.NerdFonts)
 
 	var triageClient TriageService
 	if aiCfg.ActiveProvider != "" {
 		triageClient = ai.NewTriageClientWithConfig(aiCfg)
 	} else {
 		triageClient = ai.NewTriageClient()
+	}
+
+	themeCursor := 0
+	for idx, th := range domain.AvailableThemes {
+		if th.ID == themeCfg.ActiveTheme {
+			themeCursor = idx
+			break
+		}
 	}
 
 	return Model{
@@ -154,6 +175,8 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		endpointInput:      ei,
 		customModelInput:   ci,
 		aiConfig:           aiCfg,
+		themeConfig:        themeCfg,
+		themeListCursor:    themeCursor,
 		configMode:         configViewSelectModel,
 		connectProvider:    aiCfg.ActiveProvider,
 		viewport:           vp,

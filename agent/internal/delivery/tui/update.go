@@ -95,6 +95,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeState = stateFleetTable
 			}
 
+		case stateThemeModal:
+			switch msg.String() {
+			case "esc", "q":
+				m.activeState = stateFleetTable
+				return m, nil
+			case "up", "k":
+				if m.themeListCursor > 0 {
+					m.themeListCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.themeListCursor < len(domain.AvailableThemes)-1 {
+					m.themeListCursor++
+				}
+				return m, nil
+			case "f", "F":
+				m.themeConfig.NerdFonts = !m.themeConfig.NerdFonts
+				ApplyTheme(m.themeConfig.ActiveTheme, m.themeConfig.BorderStyle, m.themeConfig.NerdFonts)
+				if m.vaultService != nil {
+					_ = m.vaultService.SaveThemeConfig(m.themeConfig)
+				}
+				return m, nil
+			case "b", "B":
+				switch m.themeConfig.BorderStyle {
+				case "double":
+					m.themeConfig.BorderStyle = "rounded"
+				case "rounded":
+					m.themeConfig.BorderStyle = "sharp"
+				default:
+					m.themeConfig.BorderStyle = "double"
+				}
+				ApplyTheme(m.themeConfig.ActiveTheme, m.themeConfig.BorderStyle, m.themeConfig.NerdFonts)
+				if m.vaultService != nil {
+					_ = m.vaultService.SaveThemeConfig(m.themeConfig)
+				}
+				return m, nil
+			case "enter":
+				if m.themeListCursor >= 0 && m.themeListCursor < len(domain.AvailableThemes) {
+					selTheme := domain.AvailableThemes[m.themeListCursor]
+					m.themeConfig.ActiveTheme = selTheme.ID
+					m.themeConfig.BorderStyle = selTheme.DefaultBorder
+					ApplyTheme(m.themeConfig.ActiveTheme, m.themeConfig.BorderStyle, m.themeConfig.NerdFonts)
+					if m.vaultService != nil {
+						_ = m.vaultService.SaveThemeConfig(m.themeConfig)
+					}
+					m.statusMessage = fmt.Sprintf("[OK] Tema activo: %s (%s)", selTheme.Name, strings.ToUpper(m.themeConfig.BorderStyle))
+					m.statusExpiry = time.Now().Add(4 * time.Second)
+					m.activeState = stateFleetTable
+					return m, nil
+				}
+			}
+
 		case stateConfirmRemediation:
 			switch msg.String() {
 			case "left", "right", "tab", "shift+tab", "h", "l":
@@ -399,6 +451,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, textinput.Blink
+
+			case "t":
+				m.activeState = stateThemeModal
+				m.themeListCursor = 0
+				for idx, th := range domain.AvailableThemes {
+					if th.ID == m.themeConfig.ActiveTheme {
+						m.themeListCursor = idx
+						break
+					}
+				}
+				return m, nil
 
 			case "r":
 				if len(filtered) > 0 && m.cursor < len(filtered) {
