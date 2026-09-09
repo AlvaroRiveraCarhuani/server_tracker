@@ -14,49 +14,63 @@ func (m Model) viewHelp() string {
 	}
 	innerW := modalWidth - 6
 
-	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("esc")
-	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Render("Atajos de teclado")
-	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
-	header := headerLeft + strings.Repeat(" ", spLen) + escBadge
+	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render("Atajos de teclado")
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
+	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
 
 	colW := (innerW - 4) / 2
-	sectionTitle := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender)
-	keyStyle := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(ColorText)
+	sectionTitle := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0)
+	keyStyle := lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+
+	renderHelpRow := func(key, desc string) string {
+		kStr := keyStyle.Render(fmt.Sprintf("  %-11s", key))
+		descW := max(10, colW-13)
+		dStr := descStyle.Render(fmt.Sprintf("%-*s", descW, desc))
+		return kStr + dStr
+	}
+
+	renderSectionHeader := func(title string) string {
+		return sectionTitle.Render(fmt.Sprintf("%-*s", colW, title))
+	}
 
 	// Columna Izquierda: Navegación & Modelos
-	var leftCol strings.Builder
-	leftCol.WriteString(sectionTitle.Render("Navegación") + "\n")
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("↑ / k"), descStyle.Render("Subir")))
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("↓ / j"), descStyle.Render("Bajar")))
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("p"), descStyle.Render("Fijar / Desanclar")))
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("P"), descStyle.Render("Limpiar fijados")))
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("Enter / l"), descStyle.Render("Ver logs")))
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n\n", keyStyle.Render("/"), descStyle.Render("Buscar / Filtrar")))
-
-	leftCol.WriteString(sectionTitle.Render("Modelos de IA") + "\n")
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("c"), descStyle.Render("Elegir modelo")))
-	leftCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("Ctrl+A"), descStyle.Render("Configurar API Key")))
+	var leftLines []string
+	leftLines = append(leftLines, renderSectionHeader("Navegación"))
+	leftLines = append(leftLines, renderHelpRow("↑ / k", "Subir"))
+	leftLines = append(leftLines, renderHelpRow("↓ / j", "Bajar"))
+	leftLines = append(leftLines, renderHelpRow("p", "Fijar / Desanclar"))
+	leftLines = append(leftLines, renderHelpRow("P", "Limpiar fijados"))
+	leftLines = append(leftLines, renderHelpRow("Enter / l", "Ver logs"))
+	leftLines = append(leftLines, renderHelpRow("/", "Buscar / Filtrar"))
+	leftLines = append(leftLines, bgStyle.Render(strings.Repeat(" ", colW)))
+	leftLines = append(leftLines, renderSectionHeader("Modelos de IA"))
+	leftLines = append(leftLines, renderHelpRow("c", "Elegir modelo"))
+	leftLines = append(leftLines, renderHelpRow("Ctrl+A", "Configurar API Key"))
 
 	// Columna Derecha: Acciones & General
-	var rightCol strings.Builder
-	rightCol.WriteString(sectionTitle.Render("Acciones") + "\n")
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("r"), descStyle.Render("Reiniciar")))
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("s"), descStyle.Render("Detener")))
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("x"), descStyle.Render("Aislar de red")))
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n\n", keyStyle.Render("e"), descStyle.Render("Abrir terminal")))
+	var rightLines []string
+	rightLines = append(rightLines, renderSectionHeader("Acciones"))
+	rightLines = append(rightLines, renderHelpRow("r", "Reiniciar"))
+	rightLines = append(rightLines, renderHelpRow("s", "Detener"))
+	rightLines = append(rightLines, renderHelpRow("x", "Aislar de red"))
+	rightLines = append(rightLines, renderHelpRow("e", "Abrir terminal"))
+	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
+	rightLines = append(rightLines, renderSectionHeader("General"))
+	rightLines = append(rightLines, renderHelpRow("t", "Temas y estilos"))
+	rightLines = append(rightLines, renderHelpRow("?", "Ver esta ayuda"))
+	rightLines = append(rightLines, renderHelpRow("q / Esc", "Cerrar / Salir"))
+	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
+	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
 
-	rightCol.WriteString(sectionTitle.Render("General") + "\n")
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("t"), descStyle.Render("Temas y estilos")))
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("?"), descStyle.Render("Ver esta ayuda")))
-	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("q / Esc"), descStyle.Render("Cerrar / Salir")))
-
-	leftBlock := lipgloss.NewStyle().Width(colW).Render(leftCol.String())
-	rightBlock := lipgloss.NewStyle().Width(colW).Render(rightCol.String())
-	sep := "    "
+	leftBlock := bgStyle.Width(colW).Render(strings.Join(leftLines, "\n"))
+	rightBlock := bgStyle.Width(colW).Render(strings.Join(rightLines, "\n"))
+	sep := bgStyle.Render("    ")
 
 	columnsRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, sep, rightBlock)
-	centeredColumns := lipgloss.NewStyle().Width(innerW).Render(columnsRow)
+	centeredColumns := bgStyle.Width(innerW).Render(columnsRow)
 
 	body := fmt.Sprintf("%s\n\n%s", header, centeredColumns)
 	return StyleModal.Width(modalWidth).Render(body)

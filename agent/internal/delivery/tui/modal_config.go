@@ -6,6 +6,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type configViewMode int
@@ -102,15 +103,22 @@ func (m Model) viewConfigModal() string {
 	}
 	innerW := modalWidth - 6
 
+	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+
+	renderHeader := func(title string, titleColor lipgloss.TerminalColor) string {
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(titleColor).Background(ColorSurface0)
+		tLen := ansi.StringWidth(title)
+		spLen := max(1, innerW-tLen-3)
+		return titleStyle.Render(title) + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
+	}
+
 	switch m.configMode {
 	case configViewConnectKey:
 		meta := domain.GetProviderMeta(m.connectProvider)
 		pCfg := m.aiConfig.Providers[m.connectProvider]
 
-		escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("esc")
-		headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Render(fmt.Sprintf("Configurar %s", meta.Name))
-		spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
-		header := headerLeft + strings.Repeat(" ", spLen) + escBadge
+		header := renderHeader(fmt.Sprintf("Configurar %s", meta.Name), ColorLavender)
 
 		keyBorderColor := ColorSurface2
 		if m.connectFocusField == 0 {
@@ -119,6 +127,8 @@ func (m Model) viewConfigModal() string {
 		keyBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(keyBorderColor).
+			BorderBackground(ColorSurface0).
+			Background(ColorSurface0).
 			Padding(0, 1).
 			Width(innerW - 4).
 			Render(m.apiKeyInput.View())
@@ -130,36 +140,38 @@ func (m Model) viewConfigModal() string {
 		epBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(epBorderColor).
+			BorderBackground(ColorSurface0).
+			Background(ColorSurface0).
 			Padding(0, 1).
 			Width(innerW - 4).
 			Render(m.endpointInput.View())
 
 		masked := pCfg.MaskedKey()
-		statusInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("Estado actual: %s", lipgloss.NewStyle().Foreground(ColorPeach).Render(masked)))
+		statusInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(fmt.Sprintf("Estado actual: %s", lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Render(masked)))
 
 		saveBtn := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorGreen).
+			BorderBackground(ColorSurface0).
 			Background(ColorGreen).
 			Foreground(ColorBase).
 			Bold(true).
 			Padding(0, 3).
 			Render("✔  GUARDAR (Enter)")
 
-		centeredSave := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Render(saveBtn)
+		centeredSave := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Background(ColorSurface0).Render(saveBtn)
 
 		body := fmt.Sprintf("%s\n\n%s\n%s\n\n%s\n\n%s", header, keyBox, epBox, statusInfo, centeredSave)
 		return StyleModal.Width(modalWidth).Render(body)
 
 	case configViewCustomModel:
-		escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("esc")
-		headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Render("Modelo personalizado")
-		spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
-		header := headerLeft + strings.Repeat(" ", spLen) + escBadge
+		header := renderHeader("Modelo personalizado", ColorLavender)
 
 		inputBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorMauve).
+			BorderBackground(ColorSurface0).
+			Background(ColorSurface0).
 			Padding(0, 1).
 			Width(innerW - 4).
 			Render(m.customModelInput.View())
@@ -167,22 +179,20 @@ func (m Model) viewConfigModal() string {
 		saveBtn := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorGreen).
+			BorderBackground(ColorSurface0).
 			Background(ColorGreen).
 			Foreground(ColorBase).
 			Bold(true).
 			Padding(0, 3).
 			Render("✔  ACTIVAR (Enter)")
 
-		centeredSave := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Render(saveBtn)
+		centeredSave := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Background(ColorSurface0).Render(saveBtn)
 
 		body := fmt.Sprintf("%s\n\n%s\n\n%s", header, inputBox, centeredSave)
 		return StyleModal.Width(modalWidth).Render(body)
 
 	default: // configViewSelectModel (Estilo OpenCode)
-		escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("esc")
-		headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorText).Render("Select model")
-		spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
-		header := headerLeft + strings.Repeat(" ", spLen) + escBadge
+		header := renderHeader("Select model", ColorText)
 
 		searchLine := m.modelSearchInput.View()
 
@@ -202,8 +212,8 @@ func (m Model) viewConfigModal() string {
 		for i := start; i < end; i++ {
 			it := items[i]
 			if it.isHeader {
-				headerStyle := lipgloss.NewStyle().Foreground(ColorMauve).Bold(true)
-				lines = append(lines, headerStyle.Render(it.headerTitle))
+				headerStyle := lipgloss.NewStyle().Foreground(ColorMauve).Background(ColorSurface0).Bold(true)
+				lines = append(lines, headerStyle.Render(fmt.Sprintf("%-*s", innerW, it.headerTitle)))
 				continue
 			}
 
@@ -211,13 +221,14 @@ func (m Model) viewConfigModal() string {
 				customLabel := "+ Custom Model ID..."
 				if i == m.modelListCursor {
 					customStyled := lipgloss.NewStyle().
+						Background(ColorSurface0).
 						Foreground(ColorPeach).
 						Bold(true).
 						Width(innerW).
 						Render("  " + customLabel)
 					lines = append(lines, customStyled)
 				} else {
-					lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  "+customLabel))
+					lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Width(innerW).Render("  "+customLabel))
 				}
 				continue
 			}
@@ -245,6 +256,7 @@ func (m Model) viewConfigModal() string {
 
 			if i == m.modelListCursor {
 				rowStyled := lipgloss.NewStyle().
+					Background(ColorSurface0).
 					Foreground(ColorPeach).
 					Bold(true).
 					Width(innerW).
@@ -253,6 +265,7 @@ func (m Model) viewConfigModal() string {
 			} else {
 				rowStyled := lipgloss.NewStyle().
 					Foreground(ColorText).
+					Background(ColorSurface0).
 					Width(innerW).
 					Render(rowText)
 				lines = append(lines, rowStyled)
@@ -260,9 +273,9 @@ func (m Model) viewConfigModal() string {
 		}
 
 		listBlock := strings.Join(lines, "\n")
-		sep := lipgloss.NewStyle().Foreground(ColorSurface1).Render(strings.Repeat("─", innerW))
+		sep := lipgloss.NewStyle().Foreground(ColorSurface1).Background(ColorSurface0).Render(strings.Repeat("─", innerW))
 
-		footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
+		footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Width(innerW).Render(
 			"Enter: Select   Ctrl+A: Connect provider   Esc: Close",
 		)
 
