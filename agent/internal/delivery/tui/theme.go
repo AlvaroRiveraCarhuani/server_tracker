@@ -138,10 +138,10 @@ var (
 		ID:            "vesper",
 		Name:          "Vesper Dark",
 		Base:          lipgloss.Color("#101010"),
-		Mantle:        lipgloss.Color("#0c0c0c"),
+		Mantle:        lipgloss.Color("#0C0C0C"),
 		Crust:         lipgloss.Color("#080808"),
 		Surface0:      lipgloss.Color("#161616"),
-		Surface1:      lipgloss.Color("#1e1e1e"),
+		Surface1:      lipgloss.Color("#1E1E1E"),
 		Surface2:      lipgloss.Color("#282828"),
 		Overlay0:      lipgloss.Color("#505050"),
 		Overlay2:      lipgloss.Color("#707070"),
@@ -149,9 +149,9 @@ var (
 		Subtext1:      lipgloss.Color("#A0A0A0"), // Muted text
 		Text:          lipgloss.Color("#FFFFFF"), // Blanco puro
 		Lavender:      lipgloss.Color("#FFC799"), // Naranja / Ámbar principal
-		Mauve:         lipgloss.Color("#FFC799"), // Naranja acento
+		Mauve:         lipgloss.Color("#E5A46B"), // Ámbar / Ocre de operadores
 		Green:         lipgloss.Color("#99FFE4"), // Menta / Aqua
-		Yellow:        lipgloss.Color("#FFD580"), // Ámbar suave
+		Yellow:        lipgloss.Color("#E5A46B"), // Ámbar
 		Peach:         lipgloss.Color("#FFC799"), // Naranja
 		Red:           lipgloss.Color("#FF8080"), // Rojo Vesper
 		Blue:          lipgloss.Color("#99FFE4"), // Menta / Aqua
@@ -162,75 +162,75 @@ var (
 	KanagawaDragonPalette = ThemePalette{
 		ID:            "kanagawa-dragon",
 		Name:          "Kanagawa Dragon",
-		Base:          lipgloss.Color("#181616"),
-		Mantle:        lipgloss.Color("#12120f"),
-		Crust:         lipgloss.Color("#0d0c0c"),
-		Surface0:      lipgloss.Color("#282727"),
-		Surface1:      lipgloss.Color("#393836"),
-		Surface2:      lipgloss.Color("#625e5a"),
-		Overlay0:      lipgloss.Color("#7a746e"),
-		Overlay2:      lipgloss.Color("#948b84"),
-		Subtext0:      lipgloss.Color("#c5c9c5"),
-		Subtext1:      lipgloss.Color("#a6a69c"),
-		Text:          lipgloss.Color("#c8c093"),
-		Lavender:      lipgloss.Color("#8a9a86"),
-		Mauve:         lipgloss.Color("#957fb8"),
-		Green:         lipgloss.Color("#87a987"),
-		Yellow:        lipgloss.Color("#c4b28a"),
-		Peach:         lipgloss.Color("#e46876"),
-		Red:           lipgloss.Color("#c34043"),
-		Blue:          lipgloss.Color("#8ba4b0"),
-		Teal:          lipgloss.Color("#7aa89f"),
+		Base:          lipgloss.Color("#181616"), // dragonBlack3
+		Mantle:        lipgloss.Color("#12120F"),
+		Crust:         lipgloss.Color("#0D0C0C"),
+		Surface0:      lipgloss.Color("#16161D"), // sumiInk0 (paneles/status)
+		Surface1:      lipgloss.Color("#282727"), // dragonBlack4
+		Surface2:      lipgloss.Color("#393836"), // dragonBlack5
+		Overlay0:      lipgloss.Color("#7A746E"),
+		Overlay2:      lipgloss.Color("#948B84"),
+		Subtext0:      lipgloss.Color("#C8C093"), // oldWhite (secundario)
+		Subtext1:      lipgloss.Color("#A6A69C"), // dragonGray2 (muted)
+		Text:          lipgloss.Color("#C5C9C5"), // dragonWhite (texto principal)
+		Lavender:      lipgloss.Color("#957FB8"), // oniViolet
+		Mauve:         lipgloss.Color("#957FB8"),
+		Green:         lipgloss.Color("#8A9A7B"), // dragonGreen2 / springGreen
+		Yellow:        lipgloss.Color("#C4B28A"), // carpYellow
+		Peach:         lipgloss.Color("#FFA066"), // surimiOrange (óxido quemado)
+		Red:           lipgloss.Color("#C34043"), // autumnRed
+		Blue:          lipgloss.Color("#8BA4B0"), // dragonBlue
+		Teal:          lipgloss.Color("#7AA89F"), // waveAqua2
 		DefaultBorder: lipgloss.RoundedBorder(),
 	}
 
 	DraculaProPalette = ThemePalette{
 		ID:            "dracula-pro",
 		Name:          "Dracula Pro Blade",
-		Base:          lipgloss.Color("#0f0f14"),
-		Mantle:        lipgloss.Color("#0a0a0e"),
+		Base:          lipgloss.Color("#0F0F14"), // background Blade
+		Mantle:        lipgloss.Color("#0A0A0E"),
 		Crust:         lipgloss.Color("#050508"),
-		Surface0:      lipgloss.Color("#22212c"),
-		Surface1:      lipgloss.Color("#282a36"),
-		Surface2:      lipgloss.Color("#383a59"),
-		Overlay0:      lipgloss.Color("#44475a"),
-		Overlay2:      lipgloss.Color("#6272a4"),
-		Subtext0:      lipgloss.Color("#8be9fd"),
-		Subtext1:      lipgloss.Color("#bfbfbf"),
-		Text:          lipgloss.Color("#f8f8f2"),
-		Lavender:      lipgloss.Color("#bd93f9"),
-		Mauve:         lipgloss.Color("#ff79c6"),
-		Green:         lipgloss.Color("#50fa7b"),
-		Yellow:        lipgloss.Color("#f1fa8c"),
-		Peach:         lipgloss.Color("#ffb86c"),
-		Red:           lipgloss.Color("#ff5555"),
-		Blue:          lipgloss.Color("#8be9fd"),
-		Teal:          lipgloss.Color("#50fa7b"),
+		Surface0:      lipgloss.Color("#191921"), // currentLine Blade
+		Surface1:      lipgloss.Color("#22212C"),
+		Surface2:      lipgloss.Color("#383A59"),
+		Overlay0:      lipgloss.Color("#44475A"),
+		Overlay2:      lipgloss.Color("#6272A4"),
+		Subtext0:      lipgloss.Color("#8BE9FD"), // cian
+		Subtext1:      lipgloss.Color("#BFBFBF"), // muted
+		Text:          lipgloss.Color("#F8F8F2"), // texto principal
+		Lavender:      lipgloss.Color("#BD93F9"), // morado Blade
+		Mauve:         lipgloss.Color("#FF79C6"), // rosa / fucsia
+		Green:         lipgloss.Color("#50FA7B"), // verde neón
+		Yellow:        lipgloss.Color("#F1FA8C"), // amarillo
+		Peach:         lipgloss.Color("#FFB86C"), // naranja
+		Red:           lipgloss.Color("#FF5555"), // rojo
+		Blue:          lipgloss.Color("#8BE9FD"), // cian
+		Teal:          lipgloss.Color("#50FA7B"),
 		DefaultBorder: lipgloss.DoubleBorder(),
 	}
 
 	PhosphorPalette = ThemePalette{
 		ID:            "phosphor",
 		Name:          "Matrix Phosphor",
-		Base:          lipgloss.Color("#000000"),
+		Base:          lipgloss.Color("#000000"), // negro absoluto
 		Mantle:        lipgloss.Color("#000000"),
 		Crust:         lipgloss.Color("#000000"),
-		Surface0:      lipgloss.Color("#051a05"),
-		Surface1:      lipgloss.Color("#0a2e0a"),
+		Surface0:      lipgloss.Color("#003300"), // sombra/rastro fósforo quemado
+		Surface1:      lipgloss.Color("#051A05"),
 		Surface2:      lipgloss.Color("#114411"),
-		Overlay0:      lipgloss.Color("#1b661b"),
-		Overlay2:      lipgloss.Color("#288828"),
-		Subtext0:      lipgloss.Color("#00ff66"),
-		Subtext1:      lipgloss.Color("#55ff55"),
-		Text:          lipgloss.Color("#e0ffe0"),
-		Lavender:      lipgloss.Color("#00ff41"),
-		Mauve:         lipgloss.Color("#33ff33"),
-		Green:         lipgloss.Color("#00ff41"),
-		Yellow:        lipgloss.Color("#aaff00"),
-		Peach:         lipgloss.Color("#88ff00"),
-		Red:           lipgloss.Color("#ff3333"),
-		Blue:          lipgloss.Color("#00ee77"),
-		Teal:          lipgloss.Color("#00ff88"),
+		Overlay0:      lipgloss.Color("#006600"),
+		Overlay2:      lipgloss.Color("#00AA00"), // fósforo P1 clásico
+		Subtext0:      lipgloss.Color("#00FF66"), // verde neón brillante
+		Subtext1:      lipgloss.Color("#00AA00"), // fósforo P1
+		Text:          lipgloss.Color("#00FF41"), // verde fósforo activo
+		Lavender:      lipgloss.Color("#00FF41"),
+		Mauve:         lipgloss.Color("#00FF66"),
+		Green:         lipgloss.Color("#00FF41"),
+		Yellow:        lipgloss.Color("#AAFF00"),
+		Peach:         lipgloss.Color("#00FF66"),
+		Red:           lipgloss.Color("#FF3333"), // alerta de impacto
+		Blue:          lipgloss.Color("#00AA00"),
+		Teal:          lipgloss.Color("#00FF66"),
 		DefaultBorder: lipgloss.NormalBorder(),
 	}
 
