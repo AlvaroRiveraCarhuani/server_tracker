@@ -15,10 +15,10 @@ func (m Model) viewThemeModal() string {
 	}
 	innerW := modalWidth - 6
 
-	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
-	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0).Render("Seleccionar Tema y Tipografía")
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("esc")
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Render("Seleccionar Tema y Tipografía")
 	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
-	header := lipgloss.NewStyle().Background(ColorSurface0).Render(headerLeft + strings.Repeat(" ", spLen) + escBadge)
+	header := headerLeft + strings.Repeat(" ", spLen) + escBadge
 
 	var lines []string
 
@@ -32,7 +32,7 @@ func (m Model) viewThemeModal() string {
 		// Mini swatch de colores
 		var swatches []string
 		for _, hex := range th.PreviewHex {
-			swatches = append(swatches, lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Background(ColorSurface0).Render("■"))
+			swatches = append(swatches, lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("■"))
 		}
 		swatchStr := strings.Join(swatches, "")
 
@@ -43,7 +43,6 @@ func (m Model) viewThemeModal() string {
 
 		if i == m.themeListCursor {
 			rowStyled := lipgloss.NewStyle().
-				Background(ColorSurface0).
 				Foreground(ColorPeach).
 				Bold(true).
 				Width(innerW).
@@ -52,7 +51,6 @@ func (m Model) viewThemeModal() string {
 		} else {
 			rowStyled := lipgloss.NewStyle().
 				Foreground(ColorText).
-				Background(ColorSurface0).
 				Width(innerW).
 				Render(rowText)
 			lines = append(lines, rowStyled)
@@ -60,21 +58,21 @@ func (m Model) viewThemeModal() string {
 	}
 
 	listBlock := strings.Join(lines, "\n")
-	sep := lipgloss.NewStyle().Foreground(ColorSurface1).Background(ColorSurface0).Render(strings.Repeat("─", innerW))
+	sep := lipgloss.NewStyle().Foreground(ColorSurface1).Render(strings.Repeat("─", innerW))
 
 	// Toggles de configuración estética
-	nerdStatus := lipgloss.NewStyle().Foreground(ColorRed).Background(ColorSurface0).Render("[OFF - ASCII Seguro]")
+	nerdStatus := lipgloss.NewStyle().Foreground(ColorRed).Render("[OFF - ASCII Seguro]")
 	if m.themeConfig.NerdFonts {
-		nerdStatus = lipgloss.NewStyle().Foreground(ColorGreen).Background(ColorSurface0).Bold(true).Render("[ON - 󰄴 󰡨 ]")
+		nerdStatus = lipgloss.NewStyle().Foreground(ColorGreen).Bold(true).Render("[ON - 󰄴 󰡨 ]")
 	}
 
-	borderStatus := lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Render(fmt.Sprintf("[%s]", strings.ToUpper(m.themeConfig.BorderStyle)))
+	borderStatus := lipgloss.NewStyle().Foreground(ColorLavender).Render(fmt.Sprintf("[%s]", strings.ToUpper(m.themeConfig.BorderStyle)))
 
-	togglesLine := lipgloss.NewStyle().Foreground(ColorSubtext1).Background(ColorSurface0).Render(
+	togglesLine := lipgloss.NewStyle().Foreground(ColorSubtext1).Render(
 		fmt.Sprintf("  [f] Nerd Fonts: %s    [b] Bordes: %s", nerdStatus, borderStatus),
 	)
 
-	footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(
+	footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
 		"Enter: Aplicar y Guardar   f: Alternar Iconos   b: Alternar Bordes   Esc: Cerrar",
 	)
 

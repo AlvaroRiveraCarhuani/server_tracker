@@ -14,15 +14,15 @@ func (m Model) viewHelp() string {
 	}
 	innerW := modalWidth - 6
 
-	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
-	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render("Atajos de teclado")
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("esc")
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Render("Atajos de teclado")
 	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
-	header := lipgloss.NewStyle().Background(ColorSurface0).Render(headerLeft + strings.Repeat(" ", spLen) + escBadge)
+	header := headerLeft + strings.Repeat(" ", spLen) + escBadge
 
 	colW := (innerW - 4) / 2
-	sectionTitle := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0)
-	keyStyle := lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+	sectionTitle := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender)
+	keyStyle := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(ColorText)
 
 	// Columna Izquierda: Navegación & Modelos
 	var leftCol strings.Builder
@@ -51,12 +51,12 @@ func (m Model) viewHelp() string {
 	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("?"), descStyle.Render("Ver esta ayuda")))
 	rightCol.WriteString(fmt.Sprintf("  %-11s %s\n", keyStyle.Render("q / Esc"), descStyle.Render("Cerrar / Salir")))
 
-	leftBlock := lipgloss.NewStyle().Width(colW).Background(ColorSurface0).Render(leftCol.String())
-	rightBlock := lipgloss.NewStyle().Width(colW).Background(ColorSurface0).Render(rightCol.String())
-	sep := lipgloss.NewStyle().Background(ColorSurface0).Render("    ")
+	leftBlock := lipgloss.NewStyle().Width(colW).Render(leftCol.String())
+	rightBlock := lipgloss.NewStyle().Width(colW).Render(rightCol.String())
+	sep := "    "
 
 	columnsRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, sep, rightBlock)
-	centeredColumns := lipgloss.NewStyle().Width(innerW).Background(ColorSurface0).Render(columnsRow)
+	centeredColumns := lipgloss.NewStyle().Width(innerW).Render(columnsRow)
 
 	body := fmt.Sprintf("%s\n\n%s", header, centeredColumns)
 	return StyleModal.Width(modalWidth).Render(body)

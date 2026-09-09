@@ -468,7 +468,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					c := filtered[m.cursor]
 					m.togglePin(c.Name)
 					if m.isPinned(c.Name) {
-						m.statusMessage = fmt.Sprintf("[📌] Contenedor '%s' fijado al inicio de la flota", c.Name)
+						pinGlyph := "󰤱"
+						if !m.themeConfig.NerdFonts {
+							pinGlyph = "^"
+						}
+						m.statusMessage = fmt.Sprintf("[%s] Contenedor '%s' fijado al inicio", pinGlyph, c.Name)
 					} else {
 						m.statusMessage = fmt.Sprintf("[-] Contenedor '%s' desanclado", c.Name)
 					}
@@ -479,7 +483,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "P":
 				if len(m.pinnedContainers) > 0 {
 					m.clearAllPins()
-					m.statusMessage = "[✔] Todos los contenedores desanclados"
+					m.statusMessage = "[OK] Todos los contenedores desanclados"
 					m.statusExpiry = time.Now().Add(3 * time.Second)
 					return m, nil
 				}

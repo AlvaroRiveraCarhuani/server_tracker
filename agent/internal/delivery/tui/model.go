@@ -81,17 +81,17 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	ms := textinput.New()
 	ms.Placeholder = "Buscar modelo o proveedor..."
 	ms.Prompt = "Search "
-	ms.PromptStyle = lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
-	ms.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
-	ms.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
+	ms.PromptStyle = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true)
+	ms.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ms.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 
 	// Input para clave de API
 	ki := textinput.New()
 	ki.Placeholder = "sk-... o clave del proveedor"
 	ki.Prompt = "API Key: "
-	ki.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Bold(true)
-	ki.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
-	ki.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
+	ki.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Bold(true)
+	ki.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ki.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 	ki.EchoMode = textinput.EchoPassword
 	ki.EchoCharacter = '•'
 
@@ -99,17 +99,17 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	ei := textinput.New()
 	ei.Placeholder = "https://api... o http://localhost:11434"
 	ei.Prompt = "Base URL: "
-	ei.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Bold(true)
-	ei.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
-	ei.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
+	ei.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Bold(true)
+	ei.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ei.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 
 	// Input para modelo custom
 	ci := textinput.New()
 	ci.Placeholder = "ej. deepseek/deepseek-r1 o claude-3-7-sonnet"
 	ci.Prompt = "Model ID: "
-	ci.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Background(ColorSurface0).Bold(true)
-	ci.TextStyle = lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
-	ci.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2).Background(ColorSurface0)
+	ci.PromptStyle = lipgloss.NewStyle().Foreground(ColorLavender).Bold(true)
+	ci.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ci.PlaceholderStyle = lipgloss.NewStyle().Foreground(ColorSurface2)
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().Padding(0, 1)

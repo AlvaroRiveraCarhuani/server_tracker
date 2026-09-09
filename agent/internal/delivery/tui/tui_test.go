@@ -754,13 +754,19 @@ func TestTUI_ContainerPinningWorkflow(t *testing.T) {
 		t.Errorf("expected pinned container 'gamma_cache' to be at index 0, got %s", pinnedList[0].Name)
 	}
 
-	// 4. Renderizar vista y comprobar que el header y badges reflejan FIJADOS
+	// 4. Renderizar vista y comprobar que el header y badges reflejan FIJADOS y no contienen emojis
 	view := mod.View()
 	if !strings.Contains(view, "FIJADOS (1)") {
 		t.Errorf("expected view to contain 'FIJADOS (1)', got:\n%s", view)
 	}
 	if !strings.Contains(view, "FIJADO") {
 		t.Errorf("expected detail view to contain 'FIJADO' badge, got:\n%s", view)
+	}
+	if !strings.Contains(view, "─") {
+		t.Errorf("expected divider line in left pane, got:\n%s", view)
+	}
+	if strings.Contains(view, "📌") {
+		t.Errorf("expected zero emojis in TUI view, found 📌 in:\n%s", view)
 	}
 
 	// 5. Presionar 'P' (Shift+P) para desanclar todos los contenedores

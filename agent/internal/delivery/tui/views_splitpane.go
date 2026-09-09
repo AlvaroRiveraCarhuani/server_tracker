@@ -101,31 +101,80 @@ func (m Model) viewTable() string {
 		}
 		rightWidth := max(38, m.width-leftWidth-2)
 
-		auxLines := 4
+		auxLines := 5
 		if m.lastError != "" {
 			auxLines++
 		}
 		if len(filtered) > 0 && m.cursor < len(filtered) && m.isAnomalous(filtered[m.cursor]) {
-			auxLines += 4
+			auxLines += 3
 		}
-		panelHeight := max(6, m.height-auxLines)
+		if m.activeState == stateFiltering {
+			auxLines++
+		}
+		panelHeight := max(4, m.height-auxLines)
 
 		// Panel Izquierdo: Lista de Contenedores (Master)
 		var leftContent strings.Builder
 		innerLeftW := leftWidth - 4 // Ancho libre dentro de StyleCard (borde + padding)
-		maxVisibleRows := max(3, panelHeight-3)
+		nameW := max(8, innerLeftW-14)
+
+		renderRow := func(i int, c domain.ContainerMetric, pinned bool) string {
+			glyph, _, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
+			tech := DetectTechnology(c.Image, c.Name)
+
+			nameStr := truncate(c.Name, nameW)
+			namePadded := fmt.Sprintf("%-*s", nameW, nameStr)
+
+			var nameStyled, prefixStyled string
+			pinIcon := " "
+			if pinned {
+				if NerdFontsMode {
+					pinIcon = "󰤱"
+				} else {
+					pinIcon = "^"
+				}
+			}
+
+			if i == m.cursor {
+				if pinned {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">" + pinIcon)
+				} else {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
+				}
+				nameStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(namePadded)
+			} else {
+				if pinned {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(" " + pinIcon)
+				} else {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
+				}
+				nameStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(namePadded)
+			}
+
+			cpuStr := fmt.Sprintf("%3.0f%%", c.CPUPercent)
+			var cpuStyled string
+			if c.CPUPercent >= 80 {
+				cpuStyled = lipgloss.NewStyle().Foreground(ColorRed).Bold(true).Render(cpuStr)
+			} else if c.CPUPercent >= 50 {
+				cpuStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(cpuStr)
+			} else {
+				cpuStyled = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(cpuStr)
+			}
+
+			techGlyph := tech.NerdGlyph
+			if !NerdFontsMode {
+				techGlyph = "*"
+			}
+			techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(techGlyph)
+			rowLine := fmt.Sprintf("%s%s %s %s %s", prefixStyled, statusStyle.Render(glyph), techGlyphStyled, nameStyled, cpuStyled)
+
+			if i == m.cursor {
+				return StyleRowFocus.Width(innerLeftW).Render(rowLine) + "\n"
+			}
+			return lipgloss.NewStyle().Width(innerLeftW).Render(rowLine) + "\n"
+		}
 
 		total := len(filtered)
-		start := 0
-		if m.cursor >= maxVisibleRows {
-			start = m.cursor - maxVisibleRows + 1
-		}
-		end := start + maxVisibleRows
-		if end > total {
-			end = total
-			start = max(0, end-maxVisibleRows)
-		}
-
 		numPinned := 0
 		for _, c := range filtered {
 			if m.isPinned(c.Name) {
@@ -133,90 +182,73 @@ func (m Model) viewTable() string {
 			}
 		}
 
-		var leftHeader string
-		if numPinned > 0 {
-			if total > maxVisibleRows {
-				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • FIJADOS (%d) • %d-%d", total, numPinned, start+1, end)
-			} else {
-				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • FIJADOS (%d)", total, numPinned)
-			}
-		} else {
-			if total > maxVisibleRows {
-				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • %d-%d", total, start+1, end)
-			} else {
-				leftHeader = fmt.Sprintf("CONTENEDORES (%d)", total)
-			}
-		}
-		leftContent.WriteString(StyleCardTitle.Render(leftHeader) + "\n\n")
-
 		if total == 0 {
+			leftContent.WriteString(StyleCardTitle.Render("CONTENEDORES (0)") + "\n\n")
 			if m.filterValue != "" {
 				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("Sin resultados para '%s'", m.filterValue)))
 			} else {
 				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Escaneando socket..."))
 			}
+		} else if numPinned > 0 {
+			leftContent.WriteString(StyleCardTitle.Render(fmt.Sprintf("FIJADOS (%d)", numPinned)) + "\n\n")
+
+			availRows := max(3, panelHeight-3)
+			pinnedCount := min(numPinned, max(1, availRows/2))
+			unpinnedRows := max(1, availRows-pinnedCount)
+
+			pinStart := 0
+			if m.cursor < numPinned && m.cursor >= pinnedCount {
+				pinStart = m.cursor - pinnedCount + 1
+			}
+			pinEnd := min(numPinned, pinStart+pinnedCount)
+			if pinEnd-pinStart < pinnedCount {
+				pinStart = max(0, pinEnd-pinnedCount)
+			}
+
+			for i := pinStart; i < pinEnd; i++ {
+				leftContent.WriteString(renderRow(i, filtered[i], true))
+			}
+
+			if total > numPinned {
+				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSurface1).Render(strings.Repeat("─", innerLeftW)) + "\n")
+
+				unpinnedTotal := total - numPinned
+				unpStart := 0
+				if m.cursor >= numPinned {
+					curInUnp := m.cursor - numPinned
+					if curInUnp >= unpinnedRows {
+						unpStart = curInUnp - unpinnedRows + 1
+					}
+				}
+				unpEnd := min(unpinnedTotal, unpStart+unpinnedRows)
+				if unpEnd-unpStart < unpinnedRows {
+					unpStart = max(0, unpEnd-unpinnedRows)
+				}
+
+				for u := unpStart; u < unpEnd; u++ {
+					idx := numPinned + u
+					leftContent.WriteString(renderRow(idx, filtered[idx], false))
+				}
+			}
 		} else {
-			nameW := max(8, innerLeftW-14)
+			maxVisibleRows := max(3, panelHeight-2)
+			start := 0
+			if m.cursor >= maxVisibleRows {
+				start = m.cursor - maxVisibleRows + 1
+			}
+			end := min(total, start+maxVisibleRows)
+			if end-start < maxVisibleRows {
+				start = max(0, end-maxVisibleRows)
+			}
+
+			leftHeader := fmt.Sprintf("CONTENEDORES (%d)", total)
+			if total > maxVisibleRows {
+				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • %d-%d", total, start+1, end)
+			}
+			leftContent.WriteString(StyleCardTitle.Render(leftHeader) + "\n\n")
+
 			for i := start; i < end; i++ {
-				c := filtered[i]
-				glyph, _, statusStyle := FormatStatus(c.Status, c.RAMBytes, c.RAMLimitBytes)
-				tech := DetectTechnology(c.Image, c.Name)
-				pinned := m.isPinned(c.Name)
-
-				nameStr := truncate(c.Name, nameW)
-				namePadded := fmt.Sprintf("%-*s", nameW, nameStr)
-
-				var nameStyled string
-				var prefixStyled string
-
-				pinIcon := " "
-				if pinned {
-					if NerdFontsMode {
-						pinIcon = "📌"
-					} else {
-						pinIcon = "^"
-					}
-				}
-
-				if i == m.cursor {
-					if pinned {
-						prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">" + pinIcon)
-					} else {
-						prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
-					}
-					nameStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(namePadded)
-				} else {
-					if pinned {
-						prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(" " + pinIcon)
-					} else {
-						prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
-					}
-					nameStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(namePadded)
-				}
-
-				cpuStr := fmt.Sprintf("%3.0f%%", c.CPUPercent)
-
-				var cpuStyled string
-				if c.CPUPercent >= 80 {
-					cpuStyled = lipgloss.NewStyle().Foreground(ColorRed).Bold(true).Render(cpuStr)
-				} else if c.CPUPercent >= 50 {
-					cpuStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(cpuStr)
-				} else {
-					cpuStyled = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(cpuStr)
-				}
-
-				techGlyph := tech.NerdGlyph
-				if !NerdFontsMode {
-					techGlyph = "*"
-				}
-				techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(techGlyph)
-				rowLine := fmt.Sprintf("%s%s %s %s %s", prefixStyled, statusStyle.Render(glyph), techGlyphStyled, nameStyled, cpuStyled)
-
-				if i == m.cursor {
-					leftContent.WriteString(StyleRowFocus.Width(innerLeftW).Render(rowLine) + "\n")
-				} else {
-					leftContent.WriteString(lipgloss.NewStyle().Width(innerLeftW).Render(rowLine) + "\n")
-				}
+				leftContent.WriteString(renderRow(i, filtered[i], false))
 			}
 		}
 
@@ -233,7 +265,7 @@ func (m Model) viewTable() string {
 			pinnedBadge := ""
 			if m.isPinned(sel.Name) {
 				if NerdFontsMode {
-					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[📌 FIJADO]")
+					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[󰤱 FIJADO]")
 				} else {
 					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[^ FIJADO]")
 				}
@@ -345,16 +377,16 @@ func (m Model) viewTable() string {
 				usageBadge = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [%d tok • ~$%.4f]", usage.TotalTokens, usage.EstimatedCostUSD))
 			}
 			bannerContent := fmt.Sprintf("%s %s%s", StyleAIOpsTag.Render("[AIOps]"), diag, usageBadge)
-			b.WriteString("\n" + StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
+			b.WriteString(StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
 		}
 	}
 
 	// Barra inferior / Filtro
 	if m.activeState == stateFiltering {
-		b.WriteString("\n" + m.filterInput.View() + "\n")
+		b.WriteString(m.filterInput.View())
 	} else {
 		if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
-			b.WriteString("\n" + StyleStatusBar.Render(m.statusMessage))
+			b.WriteString(StyleStatusBar.Render(m.statusMessage))
 		} else {
 			filterTag := ""
 			if m.filterValue != "" {
@@ -365,7 +397,7 @@ func (m Model) viewTable() string {
 				aiStatsTag = fmt.Sprintf("  |  󰚩 %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
 			}
 			shortcuts := fmt.Sprintf("[j/k, Scroll]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [e]: Shell  |  [r]: Restart  |  [s]: Stop  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s%s", filterTag, aiStatsTag)
-			b.WriteString("\n" + StyleStatusBar.Render(shortcuts))
+			b.WriteString(StyleStatusBar.Render(shortcuts))
 		}
 	}
 
