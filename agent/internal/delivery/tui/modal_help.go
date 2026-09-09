@@ -65,12 +65,21 @@ func (m Model) viewHelp() string {
 	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
 	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
 
-	leftBlock := bgStyle.Width(colW).Render(strings.Join(leftLines, "\n"))
-	rightBlock := bgStyle.Width(colW).Render(strings.Join(rightLines, "\n"))
 	sep := bgStyle.Render("    ")
-
-	columnsRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, sep, rightBlock)
-	centeredColumns := bgStyle.Width(innerW).Render(columnsRow)
+	maxRows := max(len(leftLines), len(rightLines))
+	var combinedRows []string
+	for i := 0; i < maxRows; i++ {
+		l := bgStyle.Render(strings.Repeat(" ", colW))
+		if i < len(leftLines) {
+			l = leftLines[i]
+		}
+		r := bgStyle.Render(strings.Repeat(" ", colW))
+		if i < len(rightLines) {
+			r = rightLines[i]
+		}
+		combinedRows = append(combinedRows, l+sep+r)
+	}
+	centeredColumns := strings.Join(combinedRows, "\n")
 
 	body := fmt.Sprintf("%s\n\n%s", header, centeredColumns)
 	return StyleModal.Width(modalWidth).Render(body)

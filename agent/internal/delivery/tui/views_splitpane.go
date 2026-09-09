@@ -125,7 +125,6 @@ func (m Model) viewTable() string {
 			nameStr := truncate(c.Name, nameW)
 			namePadded := fmt.Sprintf("%-*s", nameW, nameStr)
 
-			var nameStyled, prefixStyled string
 			pinIcon := " "
 			if pinned {
 				if NerdFontsMode {
@@ -135,23 +134,60 @@ func (m Model) viewTable() string {
 				}
 			}
 
-			if i == m.cursor {
-				if pinned {
-					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">" + pinIcon)
-				} else {
-					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("> ")
-				}
-				nameStyled = lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(namePadded)
-			} else {
-				if pinned {
-					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(" " + pinIcon)
-				} else {
-					prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
-				}
-				nameStyled = lipgloss.NewStyle().Foreground(ColorSubtext1).Render(namePadded)
+			techGlyph := tech.NerdGlyph
+			if !NerdFontsMode {
+				techGlyph = "*"
 			}
 
 			cpuStr := fmt.Sprintf("%3.0f%%", c.CPUPercent)
+
+			if i == m.cursor {
+				bg := ColorSurface0
+				bgStyle := lipgloss.NewStyle().Background(bg)
+
+				var prefixStyled string
+				if pinned {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Background(bg).Render(">" + pinIcon)
+				} else {
+					prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Background(bg).Render("> ")
+				}
+
+				statusGlyphStyled := statusStyle.Background(bg).Render(glyph)
+				midSp1 := bgStyle.Render(" ")
+				techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Background(bg).Render(techGlyph)
+				midSp2 := bgStyle.Render(" ")
+				nameStyled := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Background(bg).Render(namePadded)
+				midSp3 := bgStyle.Render(" ")
+
+				cpuColor := ColorSubtext0
+				if c.CPUPercent >= 80 {
+					cpuColor = ColorRed
+				} else if c.CPUPercent >= 50 {
+					cpuColor = ColorPeach
+				}
+				cpuStyle := lipgloss.NewStyle().Foreground(cpuColor).Background(bg)
+				if c.CPUPercent >= 80 {
+					cpuStyle = cpuStyle.Bold(true)
+				}
+				cpuStyled := cpuStyle.Render(cpuStr)
+
+				rowLine := prefixStyled + statusGlyphStyled + midSp1 + techGlyphStyled + midSp2 + nameStyled + midSp3 + cpuStyled
+				curW := lipgloss.Width(rowLine)
+				if curW < innerLeftW {
+					rowLine += bgStyle.Render(strings.Repeat(" ", innerLeftW-curW))
+				}
+				return rowLine + "\n"
+			}
+
+			// Fila normal (sin foco)
+			var prefixStyled string
+			if pinned {
+				prefixStyled = lipgloss.NewStyle().Foreground(ColorPeach).Render(" " + pinIcon)
+			} else {
+				prefixStyled = lipgloss.NewStyle().Foreground(ColorOverlay2).Render("  ")
+			}
+			nameStyled := lipgloss.NewStyle().Foreground(ColorSubtext1).Render(namePadded)
+
 			var cpuStyled string
 			if c.CPUPercent >= 80 {
 				cpuStyled = lipgloss.NewStyle().Foreground(ColorRed).Bold(true).Render(cpuStr)
@@ -160,17 +196,9 @@ func (m Model) viewTable() string {
 			} else {
 				cpuStyled = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(cpuStr)
 			}
-
-			techGlyph := tech.NerdGlyph
-			if !NerdFontsMode {
-				techGlyph = "*"
-			}
 			techGlyphStyled := lipgloss.NewStyle().Foreground(tech.Color).Render(techGlyph)
-			rowLine := fmt.Sprintf("%s%s %s %s %s", prefixStyled, statusStyle.Render(glyph), techGlyphStyled, nameStyled, cpuStyled)
 
-			if i == m.cursor {
-				return StyleRowFocus.Width(innerLeftW).Render(rowLine) + "\n"
-			}
+			rowLine := fmt.Sprintf("%s%s %s %s %s", prefixStyled, statusStyle.Render(glyph), techGlyphStyled, nameStyled, cpuStyled)
 			return lipgloss.NewStyle().Width(innerLeftW).Render(rowLine) + "\n"
 		}
 
@@ -210,7 +238,7 @@ func (m Model) viewTable() string {
 			}
 
 			if total > numPinned {
-				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSurface1).Render(strings.Repeat("─", innerLeftW)) + "\n")
+				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorOverlay2).Render(strings.Repeat("─", innerLeftW)) + "\n")
 
 				unpinnedTotal := total - numPinned
 				unpStart := 0
