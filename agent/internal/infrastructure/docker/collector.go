@@ -99,12 +99,17 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 	now := time.Now()
 
 	for _, c := range containers {
+		statusStr := c.Status
+		if statusStr == "" {
+			statusStr = c.State
+		}
+
 		if c.State != "running" {
 			metrics = append(metrics, domain.ContainerMetric{
 				ID:        c.ID[:12],
 				Name:      strings.TrimPrefix(c.Names[0], "/"),
 				Image:     c.Image,
-				Status:    c.State,
+				Status:    statusStr,
 				Timestamp: now,
 			})
 			continue

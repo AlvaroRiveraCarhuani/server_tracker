@@ -509,33 +509,41 @@ func FormatStatus(status string, ramBytes, ramLimit uint64) (glyph, text string,
 		return "[!!]", "OOM_RISK", StyleStatusCritical
 	}
 
-	switch strings.ToLower(status) {
-	case "running":
+	sLower := strings.ToLower(status)
+	if strings.HasPrefix(sLower, "running") || strings.HasPrefix(sLower, "up") {
 		if NerdFontsMode {
 			return "󰄴", "RUNNING", StyleStatusRunning
 		}
 		return "[OK]", "RUNNING", StyleStatusRunning
-	case "exited", "stopped":
+	}
+	if strings.HasPrefix(sLower, "exited") || strings.HasPrefix(sLower, "stopped") {
 		if NerdFontsMode {
 			return "󰅖", "STOPPED", StyleStatusStopped
 		}
 		return "[--]", "STOPPED", StyleStatusStopped
-	case "paused":
+	}
+	if strings.HasPrefix(sLower, "paused") {
 		if NerdFontsMode {
 			return "󰏤", "PAUSED", StyleStatusPaused
 		}
 		return "[||]", "PAUSED", StyleStatusPaused
-	case "restarting", "dead":
-		if NerdFontsMode {
-			return "󰀪", strings.ToUpper(status), StyleStatusCritical
-		}
-		return "[!!]", strings.ToUpper(status), StyleStatusCritical
-	default:
-		if NerdFontsMode {
-			return "󰋼", strings.ToUpper(status), StyleStatusStopped
-		}
-		return "[?]", strings.ToUpper(status), StyleStatusStopped
 	}
+	if strings.HasPrefix(sLower, "restarting") || strings.HasPrefix(sLower, "dead") {
+		words := strings.Fields(status)
+		badge := strings.ToUpper(status)
+		if len(words) > 0 {
+			badge = strings.ToUpper(words[0])
+		}
+		if NerdFontsMode {
+			return "󰀪", badge, StyleStatusCritical
+		}
+		return "[!!]", badge, StyleStatusCritical
+	}
+
+	if NerdFontsMode {
+		return "󰋼", strings.ToUpper(status), StyleStatusStopped
+	}
+	return "[--]", strings.ToUpper(status), StyleStatusStopped
 }
 
 // FormatEgress aplica el semáforo financiero y alineación de red
