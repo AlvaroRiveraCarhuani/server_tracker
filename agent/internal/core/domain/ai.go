@@ -632,3 +632,133 @@ func GetProviderMeta(id AIProvider) ProviderMetadata {
 		DefaultModel: "default",
 	}
 }
+
+// DiagnosisLevel representa la procedencia y grado de certidumbre del diagnóstico.
+type DiagnosisLevel string
+
+const (
+	LevelAI        DiagnosisLevel = "AI"   // Nivel 0: IA disponible, respuesta válida y parseada
+	LevelAIPartial DiagnosisLevel = "AI~"  // Nivel 1: IA respondió pero texto crudo o parse parcial
+	LevelRule      DiagnosisLevel = "RULE" // Nivel 2: Regla local determinística
+	LevelSignal    DiagnosisLevel = "SIG"  // Nivel 3: Señal cruda sin regla coincidente
+)
+
+// LocalRule define una regla determinística local para evaluación sin IA.
+type LocalRule struct {
+	ID              string `json:"id"`
+	MatchExitCode   *int   `json:"match_exit_code,omitempty"`
+	MatchLogPattern string `json:"match_log_pattern,omitempty"`
+	MatchStatus     string `json:"match_status,omitempty"`
+	RootCause       string `json:"root_cause"`
+	Severity        string `json:"severity"`         // "critical", "warning", "info"
+	SuggestedAction string `json:"suggested_action"` // "restart", "stop", "isolate", "none"
+}
+
+// DiagnosisResult almacena el resultado integral del triaje del incidente.
+type DiagnosisResult struct {
+	Level           DiagnosisLevel `json:"level"`
+	RootCause       string         `json:"root_cause"`
+	Severity        string         `json:"severity"`
+	SuggestedAction string         `json:"suggested_action"`
+	RawOutput       string         `json:"raw_output,omitempty"`
+	TokenUsage      TokenUsage     `json:"token_usage,omitempty"`
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+// DefaultLocalRules contiene la lista curada de reglas locales determinísticas v1.0.
+var DefaultLocalRules = []LocalRule{
+	{
+		ID:              "oom_137",
+		MatchExitCode:   intPtr(137),
+		RootCause:       "OOMKilled: contenedor superó límite de memoria",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	},
+	{
+		ID:              "sigterm_143",
+		MatchExitCode:   intPtr(143),
+		RootCause:       "Terminado por SIGTERM/timeout",
+		Severity:        "warning",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "net_refused_1",
+		MatchExitCode:   intPtr(1),
+		MatchLogPattern: "connection refused",
+		RootCause:       "Servicio dependiente no alcanzable",
+		Severity:        "critical",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "port_conflict_1",
+		MatchExitCode:   intPtr(1),
+		MatchLogPattern: "address already in use",
+		RootCause:       "Conflicto de puerto en el host",
+		Severity:        "critical",
+		SuggestedAction: "stop",
+	},
+	{
+		ID:              "disk_full_1",
+		MatchExitCode:   intPtr(1),
+		MatchLogPattern: "no space left on device",
+		RootCause:       "Sin espacio en disco",
+		Severity:        "critical",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "perm_denied_1",
+		MatchExitCode:   intPtr(1),
+		MatchLogPattern: "permission denied",
+		RootCause:       "Error de permisos en volúmenes/archivos",
+		Severity:        "warning",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "exec_format_1",
+		MatchExitCode:   intPtr(1),
+		MatchLogPattern: "exec format error",
+		RootCause:       "Mismatch de arquitectura (ej: amd64 en arm64)",
+		Severity:        "critical",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "kernel_killed_1",
+		MatchExitCode:   intPtr(1),
+		MatchLogPattern: "killed",
+		RootCause:       "Proceso eliminado por el kernel (posible OOM global)",
+		Severity:        "critical",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "crash_loop",
+		MatchStatus:     "CrashLoopBackOff",
+		RootCause:       "Fallo recurrente en el arranque",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	},
+	{
+		ID:              "oom_status",
+		MatchStatus:     "OOMKilled",
+		RootCause:       "OOMKilled: límite de memoria excedido",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	},
+	{
+		ID:              "invalid_config_255",
+		MatchExitCode:   intPtr(255),
+		RootCause:       "Error de configuración o comando de entrada inválido",
+		Severity:        "warning",
+		SuggestedAction: "none",
+	},
+	{
+		ID:              "unexpected_exit_0",
+		MatchExitCode:   intPtr(0),
+		RootCause:       "Reinicio limpio pero inesperado",
+		Severity:        "info",
+		SuggestedAction: "none",
+	},
+}
+

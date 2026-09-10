@@ -355,7 +355,24 @@ func (m Model) viewTable() string {
 
 			// Sección de Acciones Rápidas
 			rightContent.WriteString(StyleCardTitle.Render("ACCIONES DISPONIBLES:") + "\n")
-			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  [l/Enter] Logs en vivo    •  [e] Shell interactiva\n  [p] Fijar / Desanclar     •  [P] Limpiar fijados\n  [r] Restart  •  [s] Stop  •  [x] Aislar Red\n"))
+
+			// Hint visual de acción sugerida (D1 CERO RCE: estrictamente visual, jamás auto-ejecutada)
+			rLabel := "[r] Restart"
+			sLabel := "[s] Stop"
+			xLabel := "[x] Aislar Red"
+
+			if res, ok := m.diagnosisResults[sel.ID]; ok {
+				switch res.SuggestedAction {
+				case "restart":
+					rLabel = "[r] Restart (sugerido)"
+				case "stop":
+					sLabel = "[s] Stop (sugerido)"
+				case "isolate":
+					xLabel = "[x] Aislar Red (sugerido)"
+				}
+			}
+
+			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [l/Enter] Logs en vivo    •  [e] Shell interactiva\n  [p] Fijar / Desanclar     •  [P] Limpiar fijados\n  %s  •  %s  •  %s\n", rLabel, sLabel, xLabel)))
 		} else {
 			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Selecciona un contenedor de la lista izquierda."))
 		}
@@ -391,23 +408,53 @@ func (m Model) viewTable() string {
 	if len(filtered) > 0 && m.cursor < len(filtered) {
 		selected := filtered[m.cursor]
 		if m.isAnomalous(selected) {
-			diag, cached := m.diagnosisCache[selected.ID]
-			if !cached {
-				if m.triagePending[selected.ID] {
-					diag = "Analizando causa raíz con IA..."
+			res, hasRes := m.diagnosisResults[selected.ID]
+			var tagStyled string
+			var diagText string
+
+			if hasRes {
+				diagText = res.RootCause
+				switch res.Level {
+				case domain.LevelAI:
+					tagStyled = StyleTagAI.Render("[AI]")
+				case domain.LevelAIPartial:
+					tagStyled = StyleTagAIPartial.Render("[AI~]")
+				case domain.LevelRule:
+					tagStyled = StyleTagRule.Render("[RULE]")
+				default:
+					tagStyled = StyleTagSignal.Render("[SIG]")
+				}
+			} else {
+				diag, cached := m.diagnosisCache[selected.ID]
+				if cached {
+					tagStyled = StyleTagAI.Render("[AI]")
+					diagText = diag
+				} else if m.triagePending[selected.ID] {
+					tagStyled = StyleTagAI.Render("[AI]")
+					diagText = "Analizando causa raíz con IA..."
 				} else {
-					diag = "Pendiente de diagnóstico analítico..."
+					tagStyled = StyleTagSignal.Render("[SIG]")
+					diagText = "Pendiente de diagnóstico analítico..."
 				}
 			}
+
 			usage, hasUsage := m.lastDiagnosisUsage[selected.ID]
 			usageBadge := ""
 			if hasUsage && usage.TotalTokens > 0 {
 				usageBadge = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [%d tok • ~$%.4f]", usage.TotalTokens, usage.EstimatedCostUSD))
 			}
-			if strings.Contains(diag, "no configurado") {
-				diag = "Diagnóstico no configurado · [c]"
+
+			if strings.Contains(diagText, "no configurado") {
+				diagText = "Diagnóstico no configurado · [c]"
 			}
-			bannerContent := fmt.Sprintf("%s %s%s", StyleAIOpsTag.Render("[AIOps]"), diag, usageBadge)
+
+			// En modo MANUAL, si el banner es [RULE] o [SIG], agregar hint explícito para inferir con IA
+			manualHint := ""
+			if m.aiConfig.SelectionMode == domain.SelectionManual && (!hasRes || res.Level == domain.LevelRule || res.Level == domain.LevelSignal) {
+				manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(" · [i] solicitar diagnóstico IA")
+			}
+
+			bannerContent := fmt.Sprintf("%s %s%s%s", tagStyled, diagText, manualHint, usageBadge)
 			b.WriteString(StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
 		}
 	}

@@ -322,6 +322,10 @@ var (
 	StyleBtnBlurred        lipgloss.Style
 	StyleAIOpsBanner       lipgloss.Style
 	StyleAIOpsTag          lipgloss.Style
+	StyleTagAI             lipgloss.Style
+	StyleTagAIPartial      lipgloss.Style
+	StyleTagRule           lipgloss.Style
+	StyleTagSignal         lipgloss.Style
 	StyleSparklineNormal   lipgloss.Style
 	StyleSparklineWarning  lipgloss.Style
 	StyleSparklineDanger   lipgloss.Style
@@ -461,6 +465,22 @@ func ApplyTheme(themeID, borderStyle string, nerdFonts bool) {
 	StyleAIOpsTag = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(ColorMauve)
+
+	StyleTagAI = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorLavender)
+
+	StyleTagAIPartial = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorPeach)
+
+	StyleTagRule = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorMauve)
+
+	StyleTagSignal = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorSubtext0)
 
 	StyleSparklineNormal = lipgloss.NewStyle().Foreground(ColorGreen)
 	StyleSparklineWarning = lipgloss.NewStyle().Foreground(ColorPeach)

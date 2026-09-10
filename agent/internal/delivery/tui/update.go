@@ -573,6 +573,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusExpiry = time.Now().Add(3 * time.Second)
 				return m, nil
 
+			case "i", "I":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					c := filtered[m.cursor]
+					if m.isAnomalous(c) {
+						m.statusMessage = "[OK] Solicitando diagnóstico con IA..."
+						m.statusExpiry = time.Now().Add(3 * time.Second)
+						if cmd := m.triggerTriageForced(c); cmd != nil {
+							cmds = append(cmds, cmd)
+						}
+						return m, tea.Batch(cmds...)
+					}
+				}
+
 			case "c":
 				m.activeState = stateConfigModal
 				m.aiState = aiViewPolicy
@@ -661,13 +674,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tickCmd())
 
 	case diagnosisResultMsg:
-		m.diagnosisCache[msg.containerID] = msg.diagnosis
+		// Cachear ÚNICAMENTE si proviene de IA (Nivel 0 [AI] o Nivel 1 [AI~])
+		if msg.result.Level == domain.LevelAI || msg.result.Level == domain.LevelAIPartial {
+			m.diagnosisCache[msg.containerID] = msg.diagnosis
+		}
+		if m.diagnosisResults == nil {
+			m.diagnosisResults = make(map[string]domain.DiagnosisResult)
+		}
+		m.diagnosisResults[msg.containerID] = msg.result
 		m.lastDiagnosisUsage[msg.containerID] = msg.usage
 		if msg.usage.TotalTokens > 0 {
 			m.sessionTokensUsed += msg.usage.TotalTokens
 			m.sessionCostUSD += msg.usage.EstimatedCostUSD
 		}
 		delete(m.triagePending, msg.containerID)
+		return m, nil
 
 	case remediationResultMsg:
 		if msg.err != nil {

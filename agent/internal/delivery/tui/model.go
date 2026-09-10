@@ -9,6 +9,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/usecases"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
@@ -23,6 +24,8 @@ type Model struct {
 	collector          ports.CollectorPort
 	vaultService       ports.VaultPort
 	triageClient       TriageService
+	ruleEngine         *service.RuleEngine
+	diagnosisResults   map[string]domain.DiagnosisResult
 	diagnosisCache     map[string]string
 	lastDiagnosisUsage map[string]domain.TokenUsage
 	triagePending      map[string]bool
@@ -182,7 +185,9 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		collector:            collector,
 		vaultService:         vaultSvc,
 		triageClient:         triageClient,
+		ruleEngine:           service.NewRuleEngine(),
 		catalogService:       catSvc,
+		diagnosisResults:     make(map[string]domain.DiagnosisResult),
 		diagnosisCache:       make(map[string]string),
 		lastDiagnosisUsage:   make(map[string]domain.TokenUsage),
 		triagePending:        make(map[string]bool),
@@ -347,10 +352,38 @@ func (m Model) isAnomalous(c domain.ContainerMetric) bool {
 }
 
 func (m Model) triggerTriageIfAnomalous(c domain.ContainerMetric) tea.Cmd {
-	if m.triageClient == nil || !m.isAnomalous(c) {
+	return m.triggerTriage(c, false)
+}
+
+func (m Model) triggerTriageForced(c domain.ContainerMetric) tea.Cmd {
+	return m.triggerTriage(c, true)
+}
+
+func (m Model) triggerTriage(c domain.ContainerMetric, forceAI bool) tea.Cmd {
+	if !m.isAnomalous(c) {
 		return nil
 	}
-	if _, cached := m.diagnosisCache[c.ID]; cached {
+
+	// En modo MANUAL sin forzar IA: evaluar reglas locales inmediatamente (coste 0, sincrónico)
+	if m.aiConfig.SelectionMode == domain.SelectionManual && !forceAI {
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient, m.ruleEngine)
+			res := uc.ExecuteWithCascade(ctx, c, false, domain.SelectionManual)
+
+			return diagnosisResultMsg{
+				containerID: c.ID,
+				diagnosis:   res.RootCause,
+				usage:       res.TokenUsage,
+				result:      res,
+			}
+		}
+	}
+
+	// Si se consulta IA y ya está en caché, no repetir llamada a red
+	if _, cached := m.diagnosisCache[c.ID]; cached && !forceAI {
 		return nil
 	}
 	if m.triagePending[c.ID] {
@@ -362,13 +395,14 @@ func (m Model) triggerTriageIfAnomalous(c domain.ContainerMetric) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 		defer cancel()
 
-		uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient)
-		diag, usage, _ := uc.Execute(ctx, c)
+		uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient, m.ruleEngine)
+		res := uc.ExecuteWithCascade(ctx, c, forceAI, m.aiConfig.SelectionMode)
 
 		return diagnosisResultMsg{
 			containerID: c.ID,
-			diagnosis:   diag,
-			usage:       usage,
+			diagnosis:   res.RootCause,
+			usage:       res.TokenUsage,
+			result:      res,
 		}
 	}
 }

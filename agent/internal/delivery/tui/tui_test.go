@@ -238,14 +238,15 @@ func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
 	}
 
 	model := NewModel(collector)
+	model.aiConfig.SelectionMode = domain.SelectionAuto
 	model.triageClient = mockAI
 	model.metrics = metrics
 	model.cursor = 0
 
 	// 1. Contenedor sano: no debe renderizar banner AIOps
 	renderedHealthy := model.View()
-	if strings.Contains(renderedHealthy, "[AIOps]") {
-		t.Errorf("expected no AIOps banner on healthy container, got:\n%s", renderedHealthy)
+	if strings.Contains(renderedHealthy, "[AI]") || strings.Contains(renderedHealthy, "[AIOps]") {
+		t.Errorf("expected no AI banner on healthy container, got:\n%s", renderedHealthy)
 	}
 
 	// 2. Mover cursor con 'j' al contenedor con fallo (payment_service)
@@ -262,8 +263,9 @@ func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
 	msg := cmd()
 	diagMsg, ok := msg.(diagnosisResultMsg)
 	if !ok {
-		t.Fatalf("expected diagnosisResultMsg from triage cmd, got %T", msg)
+		t.Fatalf("expected diagnosisResultMsg from triage cmd, got %T (%+v)", msg, msg)
 	}
+	t.Logf("DEBUG diagMsg: container=%s diag=%s level=%s action=%s", diagMsg.containerID, diagMsg.diagnosis, diagMsg.result.Level, diagMsg.result.SuggestedAction)
 	if diagMsg.containerID != "c-crashed" {
 		t.Errorf("expected diagnosis for c-crashed, got %s", diagMsg.containerID)
 	}
@@ -274,14 +276,14 @@ func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
 	// 4. Enviar diagnosisResultMsg al modelo y comprobar que se guarda en caché
 	newModel, _ = m.Update(diagMsg)
 	m = newModel.(Model)
-	if cachedDiag, exists := m.diagnosisCache["c-crashed"]; !exists || cachedDiag != mockAI.diag {
+	if cachedDiag, exists := m.diagnosisCache["c-crashed"]; !exists || !strings.Contains(cachedDiag, "Database connection timeout") {
 		t.Errorf("expected cached diagnosis in model, got: %s (exists=%v)", cachedDiag, exists)
 	}
 
-	// 5. Renderizar vista con el contenedor anómalo en foco: debe mostrar el banner [AIOps]
+	// 5. Renderizar vista con el contenedor anómalo en foco: debe mostrar el banner [AI]
 	renderedCrashed := m.View()
-	if !strings.Contains(renderedCrashed, "[AIOps]") {
-		t.Errorf("expected rendered view to contain [AIOps] tag, got:\n%s", renderedCrashed)
+	if !strings.Contains(renderedCrashed, "[AI]") {
+		t.Errorf("expected rendered view to contain [AI] tag, got:\n%s", renderedCrashed)
 	}
 	if !strings.Contains(renderedCrashed, "Database connection timeout") {
 		t.Errorf("expected rendered view to contain diagnosis text, got:\n%s", renderedCrashed)
@@ -965,5 +967,266 @@ func TestTUI_AIOpsHierarchicalCatalogAndZeroEmojis(t *testing.T) {
 	}
 }
 
+func TestTUI_Ola1_FallbackToRuleOnAIFailure(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
 
+	// Simular fallo de IA (ej: sin key, timeout) procesado por DiagnoseContainerUseCase
+	ruleRes := domain.DiagnosisResult{
+		Level:           domain.LevelRule,
+		RootCause:       "OOMKilled: contenedor superó límite de memoria",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+		RawOutput:       "",
+	}
 
+	// Recibir diagnosisResultMsg con resultado de Nivel 2 [RULE]
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c-oom",
+		result:      ruleRes,
+	})
+	m = newModel.(Model)
+
+	// Verificar que el resultado quedó registrado
+	stored, ok := m.diagnosisResults["c-oom"]
+	if !ok {
+		t.Fatalf("expected diagnosis result for c-oom")
+	}
+	if stored.Level != domain.LevelRule {
+		t.Errorf("expected LevelRule, got %v", stored.Level)
+	}
+	if stored.SuggestedAction != "restart" {
+		t.Errorf("expected suggested action 'restart', got %s", stored.SuggestedAction)
+	}
+
+	// Verificar que NO se cacheó en diagnosisCache (las reglas son on-the-fly)
+	if _, cached := m.diagnosisCache["c-oom"]; cached {
+		t.Errorf("expected diagnosisCache to NOT store [RULE] results")
+	}
+
+	// Simular que el contenedor seleccionado es c-oom
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-oom",
+			Name:   "worker-app",
+			Status: "Exited (137) 2 minutes ago",
+		},
+	}
+	m.cursor = 0
+
+	// Renderizar vista
+	view := m.View()
+	if !strings.Contains(view, "[RULE]") {
+		t.Errorf("expected view to contain '[RULE]', got:\n%s", view)
+	}
+	if !strings.Contains(view, "OOMKilled") {
+		t.Errorf("expected view to contain 'OOMKilled', got:\n%s", view)
+	}
+	if !strings.Contains(view, "[r] Restart (sugerido)") {
+		t.Errorf("expected view to contain suggested action hint '[r] Restart (sugerido)', got:\n%s", view)
+	}
+}
+
+func TestTUI_Ola1_PartialAIParseLevelAIPartial(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+
+	aiPartialRes := domain.DiagnosisResult{
+		Level:           domain.LevelAIPartial,
+		RootCause:       "El contenedor falló debido a un error de inicialización no capturado",
+		Severity:        "warning",
+		SuggestedAction: "none",
+		RawOutput:       "Texto plano devuelto por IA sin formato JSON estructurado",
+	}
+
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c-partial",
+		result:      aiPartialRes,
+	})
+	m = newModel.(Model)
+
+	stored, ok := m.diagnosisResults["c-partial"]
+	if !ok {
+		t.Fatalf("expected diagnosis result for c-partial")
+	}
+	if stored.Level != domain.LevelAIPartial {
+		t.Errorf("expected LevelAIPartial, got %v", stored.Level)
+	}
+
+	// LevelAIPartial sí debe guardarse en diagnosisCache
+	if _, cached := m.diagnosisCache["c-partial"]; !cached {
+		t.Errorf("expected diagnosisCache to store [AI~] partial results")
+	}
+
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-partial",
+			Name:   "api-srv",
+			Status: "Exited (1) 1 minute ago",
+		},
+	}
+	m.cursor = 0
+
+	view := m.View()
+	if !strings.Contains(view, "[AI~]") {
+		t.Errorf("expected view to contain '[AI~]', got:\n%s", view)
+	}
+}
+
+func TestTUI_Ola1_ManualModeAndDemandTrigger(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.aiConfig.SelectionMode = domain.SelectionManual
+
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-crash",
+			Name:   "db-service",
+			Status: "Exited (137) 1 minute ago",
+		},
+	}
+	m.cursor = 0
+
+	// Evaluar en modo manual sin trigger explícito -> produce Nivel 2 [RULE]
+	ruleRes := domain.DiagnosisResult{
+		Level:           domain.LevelRule,
+		RootCause:       "OOMKilled: contenedor superó límite de memoria",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	}
+
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c-crash",
+		result:      ruleRes,
+	})
+	m = newModel.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "[RULE]") {
+		t.Errorf("expected view to contain '[RULE]', got:\n%s", view)
+	}
+	// Debe mostrar el hint de solicitar IA
+	if !strings.Contains(view, "[i] solicitar diagnóstico IA") {
+		t.Errorf("expected view in manual mode to show '[i] solicitar diagnóstico IA', got:\n%s", view)
+	}
+
+	// Presionar 'i' en Fleet Table para forzar IA a demanda
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = newModel.(Model)
+	if cmd == nil {
+		t.Errorf("expected command returned when pressing 'i' in manual mode")
+	}
+
+	// Simular la llegada de la respuesta de IA provocada por 'i'
+	aiRes := domain.DiagnosisResult{
+		Level:           domain.LevelAI,
+		RootCause:       "Memoria heap de Postgres agotada por consulta masiva",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	}
+	newModel, _ = m.Update(diagnosisResultMsg{
+		containerID: "c-crash",
+		result:      aiRes,
+	})
+	m = newModel.(Model)
+
+	viewAfter := m.View()
+	if !strings.Contains(viewAfter, "[AI]") {
+		t.Errorf("expected view after trigger 'i' to show '[AI]', got:\n%s", viewAfter)
+	}
+	if strings.Contains(viewAfter, "[RULE]") {
+		t.Errorf("view should not show '[RULE]' anymore, got:\n%s", viewAfter)
+	}
+}
+
+func TestTUI_Ola1_SelectiveCaching(t *testing.T) {
+	m := NewModel(nil)
+
+	// 1. Mensaje con Nivel [RULE] -> NO debe ir a diagnosisCache
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c1",
+		result: domain.DiagnosisResult{
+			Level:     domain.LevelRule,
+			RootCause: "Exit 143",
+		},
+	})
+	m = newModel.(Model)
+	if _, ok := m.diagnosisCache["c1"]; ok {
+		t.Errorf("RULE results must not be stored in diagnosisCache")
+	}
+
+	// 2. Mensaje con Nivel [SIG] -> NO debe ir a diagnosisCache
+	newModel, _ = m.Update(diagnosisResultMsg{
+		containerID: "c2",
+		result: domain.DiagnosisResult{
+			Level:     domain.LevelSignal,
+			RootCause: "Exit code 42",
+		},
+	})
+	m = newModel.(Model)
+	if _, ok := m.diagnosisCache["c2"]; ok {
+		t.Errorf("SIG results must not be stored in diagnosisCache")
+	}
+
+	// 3. Mensaje con Nivel [AI] -> SÍ debe ir a diagnosisCache
+	newModel, _ = m.Update(diagnosisResultMsg{
+		containerID: "c3",
+		result: domain.DiagnosisResult{
+			Level:     domain.LevelAI,
+			RootCause: "AI diagnosed root cause",
+		},
+	})
+	m = newModel.(Model)
+	if _, ok := m.diagnosisCache["c3"]; !ok {
+		t.Errorf("AI results must be stored in diagnosisCache")
+	}
+
+	// 4. Mensaje con Nivel [AI~] -> SÍ debe ir a diagnosisCache
+	newModel, _ = m.Update(diagnosisResultMsg{
+		containerID: "c4",
+		result: domain.DiagnosisResult{
+			Level:     domain.LevelAIPartial,
+			RootCause: "AI partial root cause",
+		},
+	})
+	m = newModel.(Model)
+	if _, ok := m.diagnosisCache["c4"]; !ok {
+		t.Errorf("AIPartial results must be stored in diagnosisCache")
+	}
+}
+
+func TestTUI_Ola1_ZeroRCE_NoAutoExecution(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+
+	// Simular diagnóstico con SuggestedAction = "restart"
+	ruleRes := domain.DiagnosisResult{
+		Level:           domain.LevelRule,
+		RootCause:       "OOMKilled: contenedor superó límite de memoria",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	}
+
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c-strict",
+		result:      ruleRes,
+	})
+	m = newModel.(Model)
+
+	// Verificar que mockColl.executedCmds está vacío (Cero RCE)
+	if len(mockColl.executedCmds) != 0 {
+		t.Fatalf("ZERO RCE VIOLATION: commands were automatically executed: %v", mockColl.executedCmds)
+	}
+
+	// Verificar que el estado de la TUI sólo tiene el hint visual y no disparó un restart
+	res := m.diagnosisResults["c-strict"]
+	if res.SuggestedAction != "restart" {
+		t.Errorf("expected suggested action 'restart', got %s", res.SuggestedAction)
+	}
+	if len(mockColl.executedCmds) != 0 {
+		t.Errorf("ZERO RCE VIOLATION: commands executed during check")
+	}
+}

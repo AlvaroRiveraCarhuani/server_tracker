@@ -39,6 +39,7 @@ type diagnosisResultMsg struct {
 	containerID string
 	diagnosis   string
 	usage       domain.TokenUsage
+	result      domain.DiagnosisResult
 }
 
 type shellFinishedMsg struct {

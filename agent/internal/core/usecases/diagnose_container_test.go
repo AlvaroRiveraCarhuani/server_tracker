@@ -99,3 +99,125 @@ func TestDiagnoseContainerUseCase_NilTriagePort(t *testing.T) {
 		t.Fatalf("expected ErrNilTriageClient, got %v", err)
 	}
 }
+
+func TestDiagnoseContainerUseCase_ExecuteWithCascade(t *testing.T) {
+	collector := &mockCollectorPort{
+		getContainerLogsFn: func(ctx context.Context, containerID string, tail int) (string, error) {
+			if containerID == "c-net" {
+				return "ERROR: dial tcp 10.0.0.1: Connection Refused", nil
+			}
+			return "", nil
+		},
+	}
+
+	t.Run("Level 0 AI: Valid structured response", func(t *testing.T) {
+		triage := &mockTriagePort{
+			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
+				return "[OOM detectado -> reiniciar servicio]", domain.TokenUsage{TotalTokens: 80}
+			},
+		}
+		uc := NewDiagnoseContainerUseCase(collector, triage)
+		res := uc.ExecuteWithCascade(context.Background(), domain.ContainerMetric{
+			ID:     "c-1",
+			Status: "exited (137)",
+		}, false, domain.SelectionAuto)
+
+		if res.Level != domain.LevelAI {
+			t.Errorf("expected LevelAI, got %v", res.Level)
+		}
+		if res.SuggestedAction != "restart" {
+			t.Errorf("expected suggested action restart, got %s", res.SuggestedAction)
+		}
+	})
+
+	t.Run("Level 1 AI~: Raw non-structured output", func(t *testing.T) {
+		triage := &mockTriagePort{
+			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
+				return "El contenedor ha finalizado debido a un error no especificado en la rutina principal", domain.TokenUsage{TotalTokens: 90}
+			},
+		}
+		uc := NewDiagnoseContainerUseCase(collector, triage)
+		res := uc.ExecuteWithCascade(context.Background(), domain.ContainerMetric{
+			ID:     "c-2",
+			Status: "exited (1)",
+		}, false, domain.SelectionAuto)
+
+		if res.Level != domain.LevelAIPartial {
+			t.Errorf("expected LevelAIPartial, got %v", res.Level)
+		}
+	})
+
+	t.Run("Level 2 RULE: AI failure fallback to rule", func(t *testing.T) {
+		triage := &mockTriagePort{
+			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
+				return "Error HTTP 429 Too Many Requests", domain.TokenUsage{}
+			},
+		}
+		uc := NewDiagnoseContainerUseCase(collector, triage)
+		res := uc.ExecuteWithCascade(context.Background(), domain.ContainerMetric{
+			ID:     "c-3",
+			Status: "exited (137)",
+		}, false, domain.SelectionAuto)
+
+		if res.Level != domain.LevelRule {
+			t.Errorf("expected LevelRule fallback, got %v", res.Level)
+		}
+		if res.SuggestedAction != "restart" {
+			t.Errorf("expected restart, got %s", res.SuggestedAction)
+		}
+	})
+
+	t.Run("Level 2 RULE: Manual mode without forceAI bypasses AI", func(t *testing.T) {
+		calledAI := false
+		triage := &mockTriagePort{
+			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
+				calledAI = true
+				return "[Error de red -> reintentar conexión]", domain.TokenUsage{}
+			},
+		}
+		uc := NewDiagnoseContainerUseCase(collector, triage)
+		res := uc.ExecuteWithCascade(context.Background(), domain.ContainerMetric{
+			ID:     "c-net",
+			Status: "exited (1)",
+		}, false, domain.SelectionManual)
+
+		if calledAI {
+			t.Error("expected AI NOT to be called in manual mode without forceAI")
+		}
+		if res.Level != domain.LevelRule {
+			t.Errorf("expected LevelRule, got %v", res.Level)
+		}
+		if res.RootCause != "Servicio dependiente no alcanzable" {
+			t.Errorf("unexpected root cause: %s", res.RootCause)
+		}
+
+		// When forceAI is true, it should call AI
+		resForced := uc.ExecuteWithCascade(context.Background(), domain.ContainerMetric{
+			ID:     "c-net",
+			Status: "exited (1)",
+		}, true, domain.SelectionManual)
+
+		if !calledAI {
+			t.Error("expected AI to be called when forceAI is true")
+		}
+		if resForced.Level != domain.LevelAI {
+			t.Errorf("expected LevelAI with forceAI, got %v", resForced.Level)
+		}
+	})
+
+	t.Run("Level 3 SIG: No AI and no rule match", func(t *testing.T) {
+		uc := NewDiagnoseContainerUseCase(collector, nil)
+		res := uc.ExecuteWithCascade(context.Background(), domain.ContainerMetric{
+			ID:     "c-unknown",
+			Status: "exited (42)",
+		}, false, domain.SelectionAuto)
+
+		if res.Level != domain.LevelSignal {
+			t.Errorf("expected LevelSignal, got %v", res.Level)
+		}
+		if res.RootCause != "Exit code 42 · sin diagnóstico" {
+			t.Errorf("unexpected root cause: %s", res.RootCause)
+		}
+	})
+}
+
