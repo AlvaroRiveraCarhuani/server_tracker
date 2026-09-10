@@ -121,10 +121,17 @@ func isAIFailure(resp string) bool {
 	rLower := strings.ToLower(resp)
 	return strings.HasPrefix(rLower, "error al") ||
 		strings.HasPrefix(rLower, "error conectando") ||
+		strings.HasPrefix(rLower, "error preparando") ||
+		strings.HasPrefix(rLower, "error leyendo") ||
 		strings.HasPrefix(rLower, "error serializando") ||
 		strings.HasPrefix(rLower, "error http") ||
 		strings.Contains(rLower, "diagnóstico no configurado") ||
+		strings.Contains(rLower, "diagnóstico no disponible") ||
+		strings.Contains(rLower, "no disponible") ||
+		strings.Contains(rLower, "tiempo de espera agotado") ||
+		strings.Contains(rLower, "cuota saturada") ||
 		strings.Contains(rLower, "ia no disponible") ||
+		strings.Contains(rLower, "respuesta no concluyente") ||
 		strings.Contains(rLower, "401 unauthorized") ||
 		strings.Contains(rLower, "429 too many requests")
 }
