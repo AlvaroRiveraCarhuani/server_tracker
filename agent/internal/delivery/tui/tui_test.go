@@ -7,6 +7,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -1519,4 +1520,296 @@ func TestTUI_Ola2_ZeroRCE_NoAutoExecution(t *testing.T) {
 		t.Fatalf("ZERO RCE VIOLATION: command was executed while navigating V4: %v", mockColl.executedCmds)
 	}
 }
+
+// ============================================================================
+// OLA 3: RED, DEPENDENCIAS Y RADIO DE IMPACTO — TESTS DE ACEPTACIÓN
+// ============================================================================
+
+// Criterio 1: Cascada visible (dependencias inferidas bidireccionales y línea resumida en CONTEXTO)
+func TestTUI_Ola3_Criterio1_CascadaVisible(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:             "db-1",
+			Name:           "solv_db",
+			Status:         "Exited (0)",
+			Networks:       []string{"solv_net"},
+			NetworkAliases: []string{"db"},
+			Ports:          []string{"127.0.0.1:5432->5432"},
+		},
+		{
+			ID:             "api-1",
+			Name:           "api-node",
+			Status:         "running",
+			Networks:       []string{"solv_net"},
+			EnvVars:        []string{"DATABASE_URL=postgres://db:5432/tracker"},
+			Ports:          []string{"0.0.0.0:3000->3000"},
+		},
+	}
+
+	// 1. V5 sobre solv_db muestra "dependen de mi: api-node (inferido)"
+	m.cursor = 0
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	viewDB := m.View()
+	if !strings.Contains(viewDB, "dependen de mi:") || !strings.Contains(viewDB, "api-node (inferido)") {
+		t.Errorf("expected V5 on solv_db to show 'dependen de mi: api-node (inferido)', got:\n%s", viewDB)
+	}
+
+	// Cerrar V5
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+
+	// 2. El panel derecho (CONTEXTO) de solv_db muestra la línea resumida
+	fleetView := m.View()
+	if !strings.Contains(fleetView, "dependen de mi: api-node") {
+		t.Errorf("expected right pane CONTEXTO of solv_db to show 'dependen de mi: api-node', got:\n%s", fleetView)
+	}
+
+	// 3. V5 sobre api-node muestra "depende de: solv_db (inferido)"
+	m.cursor = 1
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	viewAPI := m.View()
+	if !strings.Contains(viewAPI, "depende de:") || !strings.Contains(viewAPI, "solv_db (inferido)") {
+		t.Errorf("expected V5 on api-node to show 'depende de: solv_db (inferido)', got:\n%s", viewAPI)
+	}
+}
+
+// Criterio 2: Falso positivo controlado (sin coincidencias o sin red compartida produce '--')
+func TestTUI_Ola3_Criterio2_FalsoPositivoControlado(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:       "app-isolated",
+			Name:     "app-isolated",
+			Status:   "running",
+			Networks: []string{"isolated_net"},
+			EnvVars: []string{
+				"APP_ENV=production",
+				"PORT=8080",
+				"SECRET_KEY=supersecret12345",
+			},
+		},
+	}
+	m.cursor = 0
+
+	// Abrir V5
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "depende de:         --") && !strings.Contains(view, "depende de:        --") && !strings.Contains(view, "depende de:      --") {
+		if !strings.Contains(view, "--") {
+			t.Errorf("expected V5 to display '--' for empty dependencies, got:\n%s", view)
+		}
+	}
+	if strings.Contains(view, "(inferido)") {
+		t.Errorf("expected NO inferred dependencies for unmatching env vars, got:\n%s", view)
+	}
+
+	// Cerrar y verificar panel derecho
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	panelView := m.View()
+	if !strings.Contains(panelView, "dependen de mi: --") {
+		t.Errorf("expected right pane to show 'dependen de mi: --', got:\n%s", panelView)
+	}
+}
+
+// Criterio 3: Conflicto de puerto retenido por contenedor running
+func TestTUI_Ola3_Criterio3_ConflictoPuerto(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-prod",
+			Name:   "nginx-prod",
+			Status: "Up 3 hours",
+			Ports:  []string{"0.0.0.0:8080->80"},
+		},
+		{
+			ID:     "c-test",
+			Name:   "nginx-test",
+			Status: "Exited (1) 2 minutes ago",
+			Ports:  []string{"0.0.0.0:8080->80"},
+		},
+	}
+
+	// 1. V4 sobre nginx-test muestra evidencia de puerto retenido
+	m.cursor = 1
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = newModel.(Model)
+
+	v4View := m.View()
+	if !strings.Contains(v4View, "puerto 8080 · retenido por: nginx-prod") {
+		t.Errorf("expected V4 to display 'puerto 8080 · retenido por: nginx-prod', got:\n%s", v4View)
+	}
+
+	// Cerrar V4
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+
+	// 2. V5 sobre nginx-test muestra "[||] en conflicto con: nginx-prod"
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	v5View := m.View()
+	if !strings.Contains(v5View, "[||] en conflicto con: nginx-prod") {
+		t.Errorf("expected V5 to display '[||] en conflicto con: nginx-prod', got:\n%s", v5View)
+	}
+}
+
+// Criterio 4: Exposición cromática (0.0.0.0 -> [||] expuesto; 127.0.0.1 -> [OK] loopback; Cero [!!])
+func TestTUI_Ola3_Criterio4_ExposicionPuertos(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-ports",
+			Name:   "gateway-proxy",
+			Status: "running",
+			Ports:  []string{"127.0.0.1:5432->5432", "0.0.0.0:8080->8080"},
+		},
+	}
+	m.cursor = 0
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	v5View := m.View()
+	if !strings.Contains(v5View, "[OK] loopback") {
+		t.Errorf("expected 127.0.0.1 bind to show '[OK] loopback', got:\n%s", v5View)
+	}
+	if !strings.Contains(v5View, "[||] expuesto") {
+		t.Errorf("expected 0.0.0.0 bind to show '[||] expuesto', got:\n%s", v5View)
+	}
+	// D3 Cero falsas alarmas: la exposición informativa NUNCA debe usar [!!]
+	lines := strings.Split(v5View, "\n")
+	for _, l := range lines {
+		if strings.Contains(l, "8080") || strings.Contains(l, "5432") {
+			if strings.Contains(l, "[!!]") {
+				t.Errorf("PROHIBITED: port exposure must NEVER use [!!] glyph: %s", l)
+			}
+		}
+	}
+}
+
+// Criterio 5: Navegación global con 'n' en cualquier contenedor y Help actualizado
+func TestTUI_Ola3_Criterio5_NavegacionV5(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "healthy-app",
+			Name:   "healthy-app",
+			Status: "running",
+		},
+	}
+	m.cursor = 0
+
+	// 1. Tecla 'n' abre V5 incluso en contenedor sano sin diagnóstico
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+	if m.activeState != stateNetworkModal {
+		t.Fatalf("expected activeState to be stateNetworkModal, got %v", m.activeState)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "red · healthy-app") {
+		t.Errorf("expected V5 header 'red · healthy-app', got:\n%s", view)
+	}
+
+	// 2. Esc vuelve a la flota
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if m.activeState != stateFleetTable {
+		t.Fatalf("expected activeState to return to stateFleetTable after Esc, got %v", m.activeState)
+	}
+
+	// 3. Help overlay muestra "n" "V5 red" sin "(proximamente)"
+	m.activeState = stateHelp
+	helpView := m.View()
+	if !strings.Contains(helpView, "V5 red") {
+		t.Errorf("expected help overlay to contain 'V5 red', got:\n%s", helpView)
+	}
+	if strings.Contains(helpView, "V5 red (próximamente)") || strings.Contains(helpView, "V5 red (proximamente)") {
+		t.Errorf("help overlay must NOT have '(proximamente)' for key 'n'")
+	}
+}
+
+// Criterio 6: 80 columnas con blindaje ANSI y truncamiento seguro de alias en V5
+func TestTUI_Ola3_Criterio6_80ColumnasSinWrap(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 80
+	m.height = 24
+	longAlias := "database-primary-cluster-us-east-replica-01-shard-02-very-long-name"
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:             "db-wide",
+			Name:           "db-wide",
+			Status:         "running",
+			Networks:       []string{"solv_net"},
+			IPAddress:      "172.19.0.5",
+			NetworkAliases: []string{longAlias},
+		},
+	}
+	m.cursor = 0
+
+	v5View := BuildNetworkModalContent(m, m.metrics[0])
+	lines := strings.Split(v5View, "\n")
+	for i, line := range lines {
+		w := lipgloss.Width(line)
+		if w > 80 {
+			t.Errorf("V5 line %d exceeds 80 columns (width=%d):\n%s", i, w, line)
+		}
+	}
+	if !strings.Contains(v5View, "...") {
+		t.Errorf("expected long alias to be truncated with '...' in V5, got:\n%s", v5View)
+	}
+}
+
+// Criterio 7: Cero RCE en V5 (solo lectura, sin acciones ejecutables)
+func TestTUI_Ola3_Criterio7_ZeroRCE_ReadOnly(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-ro",
+			Name:   "ro-app",
+			Status: "running",
+		},
+	}
+	m.cursor = 0
+
+	// Abrir V5
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	// Intentar presionar teclas de acción típicas: enter, r, s, x
+	for _, key := range []string{"enter", "r", "s", "x", "j", "k"} {
+		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		m = newModel.(Model)
+	}
+
+	// Verificar que jamás se invocó remediación ni se cambió a modal de confirmación
+	if len(mockColl.executedCmds) != 0 {
+		t.Fatalf("ZERO RCE VIOLATION: command was executed from V5: %v", mockColl.executedCmds)
+	}
+	if m.activeState == stateConfirmRemediation {
+		t.Fatalf("V5 must NOT transition to remediation confirmation")
+	}
+}
+
 

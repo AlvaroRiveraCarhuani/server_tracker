@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -104,6 +105,28 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 			Label: "log",
 			Value: fmt.Sprintf("\"%s\"", lastLine),
 		})
+	}
+
+	// 6. Evidencia de Red: Conflicto de puerto retenido por otro contenedor running
+	graph := service.NewDependencyGraph(m.metrics)
+	conflicts := graph.GetPortConflicts(c)
+	isPortConflict := res.RootCause == "Conflicto de puerto en el host" ||
+		strings.Contains(strings.ToLower(logs), "address already in use") ||
+		strings.Contains(strings.ToLower(c.Status), "address already in use") ||
+		strings.Contains(strings.ToLower(res.RawOutput), "address already in use") ||
+		(domain.ParseExitCode(c.Status) == 1 && len(conflicts) > 0)
+
+	if isPortConflict && len(conflicts) > 0 {
+		ports := graph.GetPublishedPorts(c)
+		for _, p := range ports {
+			if owner, ok := conflicts[p.HostPort]; ok {
+				items = append(items, EvidenceItem{
+					Type:  "red",
+					Label: fmt.Sprintf("puerto %d", p.HostPort),
+					Value: fmt.Sprintf("retenido por: %s", owner),
+				})
+			}
+		}
 	}
 
 	return items
@@ -207,9 +230,15 @@ func (m Model) viewDiagnosisModal() string {
 	} else {
 		for _, ev := range evidences {
 			dot := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("  ·")
-			label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label + ":")
-			val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
-			lines = append(lines, fmt.Sprintf("%s %s %s", dot, label, val))
+			if ev.Type == "red" {
+				label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label)
+				val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
+				lines = append(lines, fmt.Sprintf("%s %s · %s", dot, label, val))
+			} else {
+				label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label + ":")
+				val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
+				lines = append(lines, fmt.Sprintf("%s %s %s", dot, label, val))
+			}
 		}
 	}
 	lines = append(lines, "")

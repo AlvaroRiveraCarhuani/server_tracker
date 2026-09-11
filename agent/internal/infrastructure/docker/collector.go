@@ -115,16 +115,32 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 
 		// Extraer metadatos de red, puertos, labels y volúmenes
 		var networksList []string
+		var ipAddress string
+		var networkAliases []string
 		if c.NetworkSettings != nil {
-			for netName := range c.NetworkSettings.Networks {
+			for netName, netEndpoint := range c.NetworkSettings.Networks {
 				networksList = append(networksList, netName)
+				if netEndpoint != nil {
+					if ipAddress == "" && netEndpoint.IPAddress != "" {
+						ipAddress = netEndpoint.IPAddress
+					}
+					for _, alias := range netEndpoint.Aliases {
+						if alias != "" && alias != c.ID && !strings.HasPrefix(c.ID, alias) {
+							networkAliases = append(networkAliases, alias)
+						}
+					}
+				}
 			}
 		}
 
 		var portsList []string
 		for _, p := range c.Ports {
 			if p.PublicPort > 0 {
-				portsList = append(portsList, fmt.Sprintf("%d->%d", p.PublicPort, p.PrivatePort))
+				if p.IP != "" {
+					portsList = append(portsList, fmt.Sprintf("%s:%d->%d", p.IP, p.PublicPort, p.PrivatePort))
+				} else {
+					portsList = append(portsList, fmt.Sprintf("%d->%d", p.PublicPort, p.PrivatePort))
+				}
 			} else if p.PrivatePort > 0 {
 				portsList = append(portsList, fmt.Sprintf("%d/%s", p.PrivatePort, p.Type))
 			}
@@ -161,6 +177,27 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 			if inspect.Config != nil {
 				envVars = inspect.Config.Env
 			}
+			if inspect.NetworkSettings != nil {
+				for _, netEndpoint := range inspect.NetworkSettings.Networks {
+					if ipAddress == "" && netEndpoint.IPAddress != "" {
+						ipAddress = netEndpoint.IPAddress
+					}
+					for _, alias := range netEndpoint.Aliases {
+						if alias != "" && alias != c.ID && !strings.HasPrefix(c.ID, alias) {
+							found := false
+							for _, a := range networkAliases {
+								if a == alias {
+									found = true
+									break
+								}
+							}
+							if !found {
+								networkAliases = append(networkAliases, alias)
+							}
+						}
+					}
+				}
+			}
 		}
 
 		if c.State != "running" {
@@ -177,6 +214,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 				EnvVars:         envVars,
 				ComposeProject:  composeProj,
 				VolumeCount:     volumeCount,
+				IPAddress:       ipAddress,
+				NetworkAliases:  networkAliases,
 				Timestamp:       now,
 			})
 			continue
@@ -238,6 +277,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 			EnvVars:             envVars,
 			ComposeProject:      composeProj,
 			VolumeCount:         volumeCount,
+			IPAddress:           ipAddress,
+			NetworkAliases:      networkAliases,
 			Timestamp:           now,
 		})
 	}

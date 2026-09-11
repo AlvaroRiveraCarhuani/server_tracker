@@ -23,6 +23,8 @@ type ContainerMetric struct {
 	EnvVars             []string  `json:"env_vars,omitempty"`
 	ComposeProject      string    `json:"compose_project,omitempty"`
 	VolumeCount         int       `json:"volume_count,omitempty"`
+	IPAddress           string    `json:"ip_address,omitempty"`
+	NetworkAliases      []string  `json:"network_aliases,omitempty"`
 	Timestamp           time.Time `json:"timestamp"`
 }
 

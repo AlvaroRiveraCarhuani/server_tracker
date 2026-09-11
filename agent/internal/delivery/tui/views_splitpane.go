@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -37,6 +38,10 @@ func (m Model) View() string {
 
 	if m.activeState == stateDiagnosisModal {
 		return overlayModal(baseView, m.viewDiagnosisModal(), m.width, m.height)
+	}
+
+	if m.activeState == stateNetworkModal {
+		return overlayModal(baseView, m.viewNetworkModal(), m.width, m.height)
 	}
 
 	return baseView
@@ -404,6 +409,18 @@ func (m Model) viewTable() string {
 				portsStr = strings.Join(sel.Ports, ", ")
 			}
 			rightContent.WriteString(fmt.Sprintf("  ports: %s · vols: %d\n", portsStr, sel.VolumeCount))
+
+			depGraph := service.NewDependencyGraph(m.metrics)
+			dependents := depGraph.GetDependents(sel)
+			var depLine string
+			if len(dependents) == 0 {
+				depLine = "  dependen de mi: --\n"
+			} else if len(dependents) <= 2 {
+				depLine = fmt.Sprintf("  dependen de mi: %s\n", strings.Join(dependents, ", "))
+			} else {
+				depLine = fmt.Sprintf("  dependen de mi: %d · [n] detalle\n", len(dependents))
+			}
+			rightContent.WriteString(depLine)
 		} else {
 			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Selecciona un contenedor de la lista izquierda."))
 		}

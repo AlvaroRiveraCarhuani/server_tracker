@@ -224,6 +224,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.triggerTriageForced(m.pendingContainer)
 			}
 
+		case stateNetworkModal:
+			switch msg.String() {
+			case "esc", "q", "n", "N":
+				m.activeState = stateFleetTable
+				return m, nil
+			}
+
 		case stateConfirmRemediation:
 			switch msg.String() {
 			case "left", "right", "tab", "shift+tab", "h", "l":
@@ -665,6 +672,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.triggerTriageIfAnomalous(c); cmd != nil {
 						return m, cmd
 					}
+					return m, nil
+				}
+
+			case "n", "N":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					c := filtered[m.cursor]
+					m.selectedID = c.ID
+					m.selectedName = c.Name
+					m.selectedState = c.Status
+					m.pendingContainer = c
+					m.activeState = stateNetworkModal
 					return m, nil
 				}
 

@@ -29,7 +29,7 @@ var DefaultKeyBindings = []KeyBinding{
 	{Key: "c", Description: "Elegir modelo", Category: "Modelos de IA"},
 	{Key: "d", Description: "V4 diagnóstico", Category: "Modelos de IA"},
 	{Key: "i", Description: "Solicitar IA", Category: "Modelos de IA"},
-	{Key: "n", Description: "V5 red (próximamente)", Category: "Modelos de IA"},
+	{Key: "n", Description: "V5 red", Category: "Modelos de IA"},
 
 	// Acciones
 	{Key: "r", Description: "Reiniciar", Category: "Acciones"},
