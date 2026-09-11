@@ -291,10 +291,118 @@ func (c *TriageClient) DiagnoseContainerWithSlot(ctx context.Context, name, imag
 	return diagResult, usageResult
 }
 
+// DiagnoseIncident analiza una cascada de fallas correlacionadas en un incidente (Ola 6).
+func (c *TriageClient) DiagnoseIncident(ctx context.Context, incidentPrompt string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+	if slot == "" {
+		slot = domain.SlotDeep
+	}
+
+	provider := c.config.ActiveProvider
+	model := c.config.ActiveModel
+
+	m := domain.GetAssignedModel(slot, c.config.SlotPolicy)
+	if m.ID != "" {
+		provider = m.ProviderID
+		model = m.ID
+	} else if c.catalogService != nil {
+		if slot == domain.SlotDeep {
+			slotM, _ := c.catalogService.GetSlotDeep()
+			if slotM.ID != "" {
+				provider = slotM.ProviderID
+				model = slotM.ID
+			}
+		} else {
+			slotM, _ := c.catalogService.GetSlotFast()
+			if slotM.ID != "" {
+				provider = slotM.ProviderID
+				model = slotM.ID
+			}
+		}
+	}
+
+	pConfig, ok := c.config.Providers[provider]
+	if !ok && provider != "" {
+		pConfig = domain.ProviderConfig{}
+	}
+
+	meta := domain.GetProviderMeta(provider)
+	if meta.RequiresKey && strings.TrimSpace(pConfig.APIKey) == "" {
+		return fmt.Sprintf("Diagnóstico no configurado (%s no tiene API Key).", meta.Name), domain.TokenUsage{}
+	}
+
+	if model == "" {
+		model = pConfig.DefaultModel
+	}
+	if model == "" {
+		model = meta.DefaultModel
+	}
+
+	systemPrompt := "Eres el motor de diagnóstico AIOps para la TUI de SOLV Server Tracker.\n" +
+		"Analiza la cascada de fallas en el incidente y responde ÚNICAMENTE con un objeto JSON válido con exactamente estos 6 campos:\n" +
+		"{\n" +
+		`  "root_cause": "<causa raíz del incidente en 1 frase>",` + "\n" +
+		`  "severity": "critical" | "warning" | "info",` + "\n" +
+		`  "suggested_action": "restart" | "stop" | "isolate" | "none",` + "\n" +
+		`  "confidence": "high" | "medium" | "low",` + "\n" +
+		`  "origin_container": "<nombre del contenedor de origen>",` + "\n" +
+		`  "cascade": ["<origen>", "<afectado1>", "<afectado2>"]` + "\n" +
+		"}\n" +
+		"Responde SOLO el objeto JSON, sin prosa previa ni posterior, sin bloques de código markdown."
+
+	start := time.Now()
+	var diagResult string
+	var usageResult domain.TokenUsage
+
+	switch provider {
+	case domain.ProviderAnthropic:
+		diagResult, usageResult = c.callAnthropic(ctx, pConfig.APIKey, model, systemPrompt, incidentPrompt)
+	case domain.ProviderOllama:
+		ep := pConfig.Endpoint
+		if ep == "" {
+			ep = defaultOllamaURL
+		}
+		if !strings.HasSuffix(ep, "/api/chat") {
+			ep = strings.TrimSuffix(ep, "/") + "/api/chat"
+		}
+		diagResult, usageResult = c.callOllama(ctx, ep, model, systemPrompt, incidentPrompt)
+	case domain.ProviderVLLM, domain.ProviderLMStudio, domain.ProviderCustom:
+		ep := pConfig.Endpoint
+		if ep == "" {
+			if provider == domain.ProviderVLLM {
+				ep = "http://localhost:8000/v1/chat/completions"
+			} else if provider == domain.ProviderLMStudio {
+				ep = "http://localhost:1234/v1/chat/completions"
+			} else {
+				ep = "http://localhost:8080/v1/chat/completions"
+			}
+		}
+		if !strings.HasSuffix(ep, "/chat/completions") {
+			ep = strings.TrimSuffix(ep, "/") + "/chat/completions"
+		}
+		diagResult, usageResult = c.callOpenAI(ctx, ep, pConfig.APIKey, model, systemPrompt, incidentPrompt, false)
+	case domain.ProviderOpenAI:
+		diagResult, usageResult = c.callOpenAI(ctx, defaultOpenAIURL, pConfig.APIKey, model, systemPrompt, incidentPrompt, false)
+	default:
+		ep := defaultOpenRouterURL
+		if pConfig.Endpoint != "" {
+			ep = pConfig.Endpoint
+		}
+		diagResult, usageResult = c.callOpenAI(ctx, ep, pConfig.APIKey, model, systemPrompt, incidentPrompt, true)
+	}
+
+	latency := time.Since(start)
+	if c.catalogService != nil && model != "" {
+		success := !strings.HasPrefix(diagResult, "Error") && !strings.HasPrefix(diagResult, "Diagnóstico no configurado")
+		c.catalogService.RecordInference(model, latency, success)
+	}
+
+	return diagResult, usageResult
+}
+
 func (c *TriageClient) callAnthropic(ctx context.Context, apiKey, model, systemPrompt, userPrompt string) (string, domain.TokenUsage) {
 	payload := map[string]interface{}{
 		"model":      model,
-		"max_tokens": 80,
+		"max_tokens": 160,
 		"system":     systemPrompt,
 		"messages": []map[string]string{
 			{"role": "user", "content": userPrompt},
@@ -365,7 +473,7 @@ func (c *TriageClient) callOpenAI(ctx context.Context, endpoint, apiKey, model, 
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
-		"max_tokens":  80,
+		"max_tokens":  160,
 		"temperature": 0.1,
 	}
 

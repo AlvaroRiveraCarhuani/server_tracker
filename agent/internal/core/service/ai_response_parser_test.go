@@ -135,3 +135,43 @@ func TestAIResponseParser_NoJSON_FallsBackToAIPartial(t *testing.T) {
 		t.Errorf("expected raw string as root cause, got %q", res.RootCause)
 	}
 }
+
+func TestAIResponseParser_IncidentFields_AndSanitize(t *testing.T) {
+	parser := NewAIResponseParser()
+	raw := `{"root_cause":"Cascada por OOM en postgres","severity":"critical","suggested_action":"restart","confidence":"high","origin_container":"postgres","cascade":["postgres","api-node","nginx","external-rogue"]}`
+
+	res := parser.Parse(raw, domain.TokenUsage{}, "Exited (137)")
+	if res.OriginContainer != "postgres" {
+		t.Errorf("expected origin_container 'postgres', got %q", res.OriginContainer)
+	}
+	if len(res.Cascade) != 4 {
+		t.Fatalf("expected 4 cascade members, got %d", len(res.Cascade))
+	}
+
+	validGroup := map[string]bool{
+		"postgres": true,
+		"api-node": true,
+		"nginx":    true,
+	}
+
+	sanitized := parser.SanitizeIncidentMembers(res, validGroup)
+	if sanitized.OriginContainer != "postgres" {
+		t.Errorf("expected origin_container 'postgres', got %q", sanitized.OriginContainer)
+	}
+	if len(sanitized.Cascade) != 3 {
+		t.Fatalf("expected 3 cascade members after sanitize, got %d", len(sanitized.Cascade))
+	}
+	for _, m := range sanitized.Cascade {
+		if m == "external-rogue" {
+			t.Errorf("expected 'external-rogue' to be filtered out")
+		}
+	}
+
+	// Test case where origin is outside group
+	invalidOrigin := res
+	invalidOrigin.OriginContainer = "hacker-bot"
+	sanitizedInvalid := parser.SanitizeIncidentMembers(invalidOrigin, validGroup)
+	if sanitizedInvalid.OriginContainer != "" {
+		t.Errorf("expected invalid origin to be empty, got %q", sanitizedInvalid.OriginContainer)
+	}
+}

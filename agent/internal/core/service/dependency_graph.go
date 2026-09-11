@@ -356,6 +356,23 @@ func (g *DependencyGraph) GetDependents(c domain.ContainerMetric) []string {
 	return nil
 }
 
+// HasDependency verifica si fromName depende de toName (inferido).
+func (g *DependencyGraph) HasDependency(fromName, toName string) bool {
+	cleanFrom := strings.TrimPrefix(fromName, "/")
+	cleanTo := strings.TrimPrefix(toName, "/")
+
+	deps := g.dependsOn[cleanFrom]
+	if len(deps) == 0 {
+		deps = g.dependsOn[fromName]
+	}
+	for _, dep := range deps {
+		if strings.TrimPrefix(dep, "/") == cleanTo {
+			return true
+		}
+	}
+	return false
+}
+
 // GetImpactRadius calcula cuántos contenedores comparten redes con C (excluyéndose a sí mismo).
 func (g *DependencyGraph) GetImpactRadius(c domain.ContainerMetric) (int, string) {
 	peers := g.sharedPeers[c.Name]

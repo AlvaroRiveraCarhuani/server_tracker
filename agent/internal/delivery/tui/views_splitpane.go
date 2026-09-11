@@ -36,6 +36,10 @@ func (m Model) View() string {
 		return overlayModal(baseView, m.viewThemeModal(), m.width, m.height)
 	}
 
+	if m.activeState == statePreferences {
+		return overlayModal(baseView, m.viewPreferencesModal(), m.width, m.height)
+	}
+
 	if m.activeState == stateDiagnosisModal {
 		return overlayModal(baseView, m.viewDiagnosisModal(), m.width, m.height)
 	}
@@ -369,7 +373,19 @@ func (m Model) viewTable() string {
 
 			// 3. DIAGNÓSTICO
 			rightContent.WriteString(StyleCardTitle.Render("DIAGNÓSTICO") + "\n")
-			if res, ok := m.diagnosisResults[sel.ID]; ok {
+			var incPart *service.Incident
+			if m.incidentAggregator != nil {
+				incPart = m.incidentAggregator.GetActiveIncidentFor(sel.Name)
+				if incPart == nil {
+					incPart = m.incidentAggregator.GetActiveIncidentFor(sel.ID)
+				}
+			}
+
+			if incPart != nil {
+				incTag := StyleTagIncident.Render("[INC]")
+				dHint := lipgloss.NewStyle().Foreground(ColorLavender).Render("[d]")
+				rightContent.WriteString(fmt.Sprintf("  %s parte de incidente %s · %s\n\n", incTag, incPart.GroupName, dHint))
+			} else if res, ok := m.diagnosisResults[sel.ID]; ok {
 				var tagStr string
 				switch res.Level {
 				case domain.LevelAI:
@@ -456,9 +472,28 @@ func (m Model) viewTable() string {
 	if len(filtered) > 0 && m.cursor < len(filtered) {
 		selected := filtered[m.cursor]
 		if m.isAnomalous(selected) {
-			res, hasRes := m.diagnosisResults[selected.ID]
-			var tagStyled string
-			var diagText string
+			bannerWidth := max(40, m.width-2)
+
+			var activeInc *service.Incident
+			if m.incidentAggregator != nil {
+				activeInc = m.incidentAggregator.GetActiveIncidentFor(selected.Name)
+				if activeInc == nil {
+					activeInc = m.incidentAggregator.GetActiveIncidentFor(selected.ID)
+				}
+			}
+
+			if activeInc != nil {
+				// Decisión I3: Mientras el incidente vive: banners individuales de involucrados se REEMPLAZAN por el banner [INC].
+				policy := domain.IncidentBannerPolicy(m.themeConfig.IncidentBannerPolicy)
+				bannerContent := service.FormatIncidentBanner(activeInc, policy, bannerWidth)
+				if lipgloss.Width(bannerContent) > bannerWidth {
+					bannerContent = truncate(bannerContent, bannerWidth)
+				}
+				b.WriteString(StyleAIOpsBanner.Width(bannerWidth).Render(bannerContent) + "\n")
+			} else {
+				res, hasRes := m.diagnosisResults[selected.ID]
+				var tagStyled string
+				var diagText string
 
 			if hasRes {
 				diagText = res.RootCause
@@ -572,6 +607,7 @@ func (m Model) viewTable() string {
 			}
 
 			b.WriteString(StyleAIOpsBanner.Width(bannerWidth).Render(bannerContent) + "\n")
+			}
 		}
 	}
 
@@ -623,7 +659,7 @@ func (m Model) viewTable() string {
 			}
 			modeTokenWithSession := fmt.Sprintf("%s · %s", modeToken, sessionStr)
 
-			shortcuts := fmt.Sprintf("%s  |  [j/k]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s", modeTokenWithSession, filterTag)
+			shortcuts := fmt.Sprintf("%s  |  [j/k]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [c]: IA  |  [t]: Preferencias  |  [/]: Filtro%s", modeTokenWithSession, filterTag)
 			b.WriteString(StyleStatusBar.Render(shortcuts))
 		}
 	}

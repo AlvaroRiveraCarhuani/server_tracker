@@ -703,11 +703,12 @@ func TestTUI_ThemeModalWorkflow(t *testing.T) {
 	model.width = 100
 	model.height = 30
 
-	// 1. Abrir modal con 't'
-	m1, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	// 1. Abrir modal con 't' (Preferencias) y dar Enter en "temas y estilos"
+	m0, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	m1, _ := m0.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mod := m1.(Model)
 	if mod.activeState != stateThemeModal {
-		t.Fatalf("expected stateThemeModal after pressing 't', got %v", mod.activeState)
+		t.Fatalf("expected stateThemeModal after pressing 't' and enter, got %v", mod.activeState)
 	}
 
 	// 2. Renderizar vista modal
@@ -2525,3 +2526,445 @@ func TestTUI_Ola5_Criterio8_ResetContadoresSesion(t *testing.T) {
 		t.Errorf("expected 'sesión: 0 req · ~$0.00' on fresh model restart, got %q", sb)
 	}
 }
+
+// =========================================================================
+// OLA 6: INCIDENTES CORRELACIONADOS (10 CRITERIOS DE ACEPTACIÓN)
+// =========================================================================
+
+// Criterio 1: Cascada con postgres, api-node y nginx produce UN banner [INC]
+func TestTUI_Ola6_Criterio1_CascadaBannerUnificado(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 100
+	m.height = 30
+
+	now := time.Now()
+	c1 := domain.ContainerMetric{
+		ID:              "c-pg",
+		Name:            "postgres",
+		Status:          "Exited (137)",
+		ComposeProject:  "solv_stack",
+		Networks:        []string{"solv_net"},
+		LastStateChange: now.Add(-10 * time.Second),
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c-api",
+		Name:            "api-node",
+		Status:          "Exited (1)",
+		ComposeProject:  "solv_stack",
+		Networks:        []string{"solv_net"},
+		EnvVars:         []string{"DATABASE_URL=postgres://postgres:5432"},
+		LastStateChange: now.Add(-5 * time.Second),
+	}
+	c3 := domain.ContainerMetric{
+		ID:              "c-nginx",
+		Name:            "nginx",
+		Status:          "Exited (1)",
+		ComposeProject:  "solv_stack",
+		Networks:        []string{"solv_net"},
+		EnvVars:         []string{"UPSTREAM_SERVER=api-node:8080"},
+		LastStateChange: now.Add(-2 * time.Second),
+	}
+
+	m1, _ := m.Update([]domain.ContainerMetric{c1, c2, c3})
+	mod := m1.(Model)
+
+	// Verificar que existe el incidente activo
+	inc := mod.incidentAggregator.GetActiveIncidentFor("postgres")
+	if inc == nil {
+		t.Fatalf("expected active incident for postgres")
+	}
+	if inc.GroupName != "solv_stack" {
+		t.Errorf("expected group solv_stack, got %q", inc.GroupName)
+	}
+	if inc.CandidateOrigin != "postgres" {
+		t.Errorf("expected candidate origin postgres, got %q", inc.CandidateOrigin)
+	}
+
+	// Renderizar vista
+	view := mod.View()
+	lines := strings.Split(view, "\n")
+	incBannerCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "[INC]") && !strings.Contains(line, "parte de incidente") {
+			incBannerCount++
+			if !strings.Contains(line, "origen postgres") {
+				t.Errorf("expected banner to identify postgres as origin, got:\n%s", line)
+			}
+			if !strings.Contains(line, "[d]") {
+				t.Errorf("expected banner to have '[d]' hint, got:\n%s", line)
+			}
+		}
+	}
+	if incBannerCount != 1 {
+		t.Errorf("expected exactly 1 [INC] top banner, found %d", incBannerCount)
+	}
+
+	// Verificar panel derecho DIAGNÓSTICO
+	if !strings.Contains(view, "[INC] parte de incidente solv_stack") {
+		t.Errorf("expected right panel to indicate member of incident, got:\n%s", view)
+	}
+}
+
+// Criterio 2: Coincidencia sin lazo topológico NO produce incidente
+func TestTUI_Ola6_Criterio2_CoincidenciaSinLazoTopologico(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 100
+	m.height = 30
+
+	now := time.Now()
+	c1 := domain.ContainerMetric{
+		ID:              "c-db",
+		Name:            "db-isolated",
+		Status:          "Exited (1)",
+		ComposeProject:  "app-a",
+		Networks:        []string{"net-a"},
+		LastStateChange: now,
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c-cache",
+		Name:            "cache-isolated",
+		Status:          "Exited (1)",
+		ComposeProject:  "app-b",
+		Networks:        []string{"net-b"},
+		LastStateChange: now,
+	}
+
+	m1, _ := m.Update([]domain.ContainerMetric{c1, c2})
+	mod := m1.(Model)
+
+	if len(mod.incidentAggregator.GetAllActiveIncidents()) != 0 {
+		t.Errorf("expected 0 incidents for containers without hard topology, got %d", len(mod.incidentAggregator.GetAllActiveIncidents()))
+	}
+	if mod.incidentAggregator.GetActiveIncidentFor("db-isolated") != nil {
+		t.Errorf("expected db-isolated to have no incident")
+	}
+}
+
+// Criterio 3: Cascada lenta (60-90s después) se adjunta si hay arista depende-de e incidente < 5min
+func TestTUI_Ola6_Criterio3_CascadaLentaAdjuncion(t *testing.T) {
+	m := NewModel(nil)
+	t0 := time.Now().Add(-80 * time.Second)
+
+	c1 := domain.ContainerMetric{
+		ID:              "c1",
+		Name:            "postgres",
+		Status:          "Exited (137)",
+		Networks:        []string{"solv_net"},
+		LastStateChange: t0,
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c2",
+		Name:            "redis",
+		Status:          "Exited (1)",
+		Networks:        []string{"solv_net"},
+		LastStateChange: t0.Add(2 * time.Second),
+	}
+
+	// Abrir incidente en t0
+	m1, _ := m.Update([]domain.ContainerMetric{c1, c2})
+	mod := m1.(Model)
+	initInc := mod.incidentAggregator.GetActiveIncidentFor("postgres")
+	if initInc == nil {
+		t.Fatalf("expected incident at t0")
+	}
+
+	// 80s después: api-node falla con dependencia hacia postgres
+	t1 := time.Now()
+	c3 := domain.ContainerMetric{
+		ID:              "c3",
+		Name:            "api-node",
+		Status:          "Exited (1)",
+		Networks:        []string{"solv_net"},
+		EnvVars:         []string{"DATABASE_URL=postgres://postgres:5432"},
+		LastStateChange: t1,
+	}
+
+	m2, _ := mod.Update([]domain.ContainerMetric{c1, c2, c3})
+	mod2 := m2.(Model)
+
+	attachedInc := mod2.incidentAggregator.GetActiveIncidentFor("api-node")
+	if attachedInc == nil {
+		t.Fatalf("expected api-node to be attached to active incident")
+	}
+	if attachedInc.ID != initInc.ID {
+		t.Errorf("expected api-node to join incident %s, got %s", initInc.ID, attachedInc.ID)
+	}
+	if len(attachedInc.Cascade) < 3 {
+		t.Errorf("expected cascade count to update with attached member, got %d", len(attachedInc.Cascade))
+	}
+}
+
+// Criterio 4: Estados de confianza (s/d si simultáneo sin arista, confirmado si antiguo+arista, probable si antiguo solo)
+func TestTUI_Ola6_Criterio4_EstadosDeConfianzaOrigen(t *testing.T) {
+	agg := service.NewIncidentAggregator(30)
+	now := time.Now()
+
+	// 1. Simultáneos sin arista -> s/d
+	c1 := domain.ContainerMetric{ID: "1", Name: "w1", Status: "Exited (1)", Networks: []string{"n1"}, LastStateChange: now}
+	c2 := domain.ContainerMetric{ID: "2", Name: "w2", Status: "Exited (1)", Networks: []string{"n1"}, LastStateChange: now}
+	incSD := agg.IngestAnomalies([]domain.ContainerMetric{c1, c2}, service.NewDependencyGraph([]domain.ContainerMetric{c1, c2}), nil, now)
+	if len(incSD) != 1 || incSD[0].OriginConfidence != domain.ConfidenceUndetermined {
+		t.Errorf("expected ConfidenceUndetermined, got %v", incSD[0].OriginConfidence)
+	}
+
+	// 2. Más antiguo + arista -> confirmado
+	agg2 := service.NewIncidentAggregator(30)
+	c3 := domain.ContainerMetric{ID: "3", Name: "db", Status: "Exited (137)", Networks: []string{"n2"}, LastStateChange: now.Add(-10 * time.Second)}
+	c4 := domain.ContainerMetric{ID: "4", Name: "api", Status: "Exited (1)", Networks: []string{"n2"}, EnvVars: []string{"DB=db"}, LastStateChange: now}
+	g2 := service.NewDependencyGraph([]domain.ContainerMetric{c3, c4})
+	incConf := agg2.IngestAnomalies([]domain.ContainerMetric{c3, c4}, g2, nil, now)
+	if len(incConf) != 1 || incConf[0].OriginConfidence != domain.ConfidenceConfirmed {
+		t.Errorf("expected ConfidenceConfirmed, got %v", incConf[0].OriginConfidence)
+	}
+
+	// 3. Más antiguo sin arista -> probable
+	agg3 := service.NewIncidentAggregator(30)
+	c5 := domain.ContainerMetric{ID: "5", Name: "svc-a", Status: "Exited (1)", Networks: []string{"n3"}, LastStateChange: now.Add(-25 * time.Second)}
+	c6 := domain.ContainerMetric{ID: "6", Name: "svc-b", Status: "Exited (1)", Networks: []string{"n3"}, LastStateChange: now}
+	g3 := service.NewDependencyGraph([]domain.ContainerMetric{c5, c6})
+	incProb := agg3.IngestAnomalies([]domain.ContainerMetric{c5, c6}, g3, nil, now)
+	if len(incProb) != 1 || incProb[0].OriginConfidence != domain.ConfidenceProbable {
+		t.Errorf("expected ConfidenceProbable, got %v", incProb[0].OriginConfidence)
+	}
+}
+
+// Criterio 5: Política informativo vs prudente
+func TestTUI_Ola6_Criterio5_PoliticaInformativoVsPrudente(t *testing.T) {
+	inc := &service.Incident{
+		ID:               "inc-5",
+		GroupName:        "solv_net",
+		CandidateOrigin:  "postgres",
+		OriginConfidence: domain.ConfidenceProbable,
+		Cascade:          []string{"postgres", "api-node", "nginx"},
+		Diagnosis: domain.DiagnosisResult{
+			Level: domain.LevelAI,
+		},
+		Events: []service.IncidentEvent{
+			{ContainerName: "postgres", Reason: "OOM"},
+			{ContainerName: "api-node", Reason: "exit 1"},
+			{ContainerName: "nginx", Reason: "502"},
+		},
+	}
+
+	// Modo Informativo (default) -> muestra "origen prob. postgres"
+	bInfo := service.FormatIncidentBanner(inc, domain.BannerPolicyInformativo, 80)
+	if !strings.Contains(bInfo, "origen prob. postgres") {
+		t.Errorf("expected 'origen prob. postgres' in informativo banner, got %q", bInfo)
+	}
+
+	// Modo Prudente -> reserva el banner para confirmado, muestra "3 anómalos"
+	bPrud := service.FormatIncidentBanner(inc, domain.BannerPolicyPrudente, 80)
+	if strings.Contains(bPrud, "origen prob.") {
+		t.Errorf("expected 'origen prob.' to be hidden in prudente banner, got %q", bPrud)
+	}
+	if !strings.Contains(bPrud, "3 anómalos") {
+		t.Errorf("expected '3 anómalos' in prudente banner, got %q", bPrud)
+	}
+
+	// Pero en V4, SIEMPRE se muestra con su evidencia
+	m := NewModel(nil)
+	m.width = 100
+	m.height = 30
+	m.activeIncident = inc
+	m.activeState = stateDiagnosisModal
+	v4View := m.View()
+	if !strings.Contains(v4View, "postgres (probable)") {
+		t.Errorf("expected V4 to display 'postgres (probable)', got:\n%s", v4View)
+	}
+}
+
+// Criterio 6: Override manual ('o') sobre contenedor en V4 incidente fija (manual) y acción sugerida
+func TestTUI_Ola6_Criterio6_OverrideManualOrigen(t *testing.T) {
+	now := time.Now()
+	c1 := domain.ContainerMetric{ID: "c1", Name: "w1", Status: "Exited (1)", Networks: []string{"solv_net"}, LastStateChange: now}
+	c2 := domain.ContainerMetric{ID: "c2", Name: "w2", Status: "Exited (1)", Networks: []string{"solv_net"}, LastStateChange: now}
+
+	m := NewModel(nil)
+	m.width = 100
+	m.height = 30
+	m1, _ := m.Update([]domain.ContainerMetric{c1, c2})
+	mod := m1.(Model)
+
+	// Abrir V4 incidente con 'd'
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	mod2 := m2.(Model)
+	if mod2.activeIncident == nil {
+		t.Fatalf("expected activeIncident in V4")
+	}
+
+	// Inicialmente origen s/d
+	v4Initial := mod2.View()
+	if !strings.Contains(v4Initial, "sin determinar · señales en conflicto") {
+		t.Errorf("expected initial undetermined origin in V4, got:\n%s", v4Initial)
+	}
+
+	// Mover cursor hacia el segundo contenedor 'w2' y pulsar 'o'
+	m3, _ := mod2.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m4, _ := m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	mod4 := m4.(Model)
+
+	v4Manual := mod4.View()
+	if !strings.Contains(v4Manual, "w2 (manual)") {
+		t.Errorf("expected 'w2 (manual)' in V4 after pressing 'o', got:\n%s", v4Manual)
+	}
+	if !strings.Contains(v4Manual, "aplicar restart a w2 (origen)") {
+		t.Errorf("expected suggested action targeting w2, got:\n%s", v4Manual)
+	}
+
+	// Pulsar 'r' para confirmar remediación -> debe abrir modal de confirmación, CERO RCE
+	m5, _ := mod4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	mod5 := m5.(Model)
+	if mod5.activeState != stateConfirmRemediation {
+		t.Fatalf("expected stateConfirmRemediation after pressing 'r', got %v", mod5.activeState)
+	}
+	if mod5.pendingContainer.Name != "w2" {
+		t.Errorf("expected pending remediation container to be 'w2', got %q", mod5.pendingContainer.Name)
+	}
+}
+
+// Criterio 7: Modo offline / sin IA funciona bajo [RULE] con origen por timeline + arista
+func TestTUI_Ola6_Criterio7_DegradacionOfflineReglas(t *testing.T) {
+	m := NewModel(nil) // Sin IA conectada
+	m.width = 100
+	m.height = 30
+	now := time.Now()
+
+	c1 := domain.ContainerMetric{
+		ID:              "c-pg",
+		Name:            "postgres",
+		Status:          "Exited (137)",
+		Networks:        []string{"offline_net"},
+		LastStateChange: now.Add(-10 * time.Second),
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c-api",
+		Name:            "api-node",
+		Status:          "Exited (1)",
+		Networks:        []string{"offline_net"},
+		EnvVars:         []string{"DB=postgres"},
+		LastStateChange: now,
+	}
+
+	m1, _ := m.Update([]domain.ContainerMetric{c1, c2})
+	mod := m1.(Model)
+
+	inc := mod.incidentAggregator.GetActiveIncidentFor("postgres")
+	if inc == nil {
+		t.Fatalf("expected active incident")
+	}
+	if inc.Diagnosis.Level != domain.LevelRule {
+		t.Errorf("expected LevelRule, got %v", inc.Diagnosis.Level)
+	}
+	if !strings.Contains(inc.Diagnosis.RootCause, "postgres") {
+		t.Errorf("expected root cause to mention postgres, got %q", inc.Diagnosis.RootCause)
+	}
+
+	// Abrir V4 incidente
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	mod2 := m2.(Model)
+	v4View := mod2.View()
+	if !strings.Contains(v4View, "[RULE]") {
+		t.Errorf("expected [RULE] badge in offline incident V4, got:\n%s", v4View)
+	}
+}
+
+// Criterio 8: Presupuesto de prompt (grupo de 6 contenedores -> 4 con logs, 2 por nombre)
+func TestTUI_Ola6_Criterio8_PresupuestoPrompt(t *testing.T) {
+	mockColl := &mockCollectorForTUI{
+		logs: "2026-09-11 12:00:00 fatal error in container\n",
+	}
+	m := NewModel(mockColl)
+	now := time.Now()
+
+	var metrics []domain.ContainerMetric
+	for i := 1; i <= 6; i++ {
+		name := fmt.Sprintf("svc-%d", i)
+		metrics = append(metrics, domain.ContainerMetric{
+			ID:              fmt.Sprintf("id-%d", i),
+			Name:            name,
+			Status:          "Exited (1)",
+			Networks:        []string{"big_net"},
+			LastStateChange: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+
+	m1, _ := m.Update(metrics)
+	mod := m1.(Model)
+	inc := mod.incidentAggregator.GetActiveIncidentFor("svc-1")
+	if inc == nil {
+		t.Fatalf("expected active incident for 6 containers")
+	}
+
+	prompt := mod.buildIncidentPrompt(inc)
+	// Verificar que contiene logs de máx 4
+	logCount := strings.Count(prompt, "Logs:\n")
+	if logCount > 4 {
+		t.Errorf("expected at most 4 containers with logs, got %d", logCount)
+	}
+	// Los contenedores excedentes entran solo por nombre
+	if !strings.Contains(prompt, "Otros contenedores involucrados") {
+		t.Errorf("expected prompt to list overflow containers by name, got:\n%s", prompt)
+	}
+}
+
+// Criterio 9: Cierre tras 2x ventana sin adjunciones
+func TestTUI_Ola6_Criterio9_CierrePeriodoQuieto(t *testing.T) {
+	agg := service.NewIncidentAggregator(10) // 10s ventana -> 20s quiet
+	now := time.Now()
+
+	c1 := domain.ContainerMetric{ID: "c1", Name: "app1", Status: "Exited (1)", Networks: []string{"q_net"}, LastStateChange: now}
+	c2 := domain.ContainerMetric{ID: "c2", Name: "app2", Status: "Exited (1)", Networks: []string{"q_net"}, LastStateChange: now}
+
+	opened := agg.IngestAnomalies([]domain.ContainerMetric{c1, c2}, nil, nil, now)
+	if len(opened) != 1 {
+		t.Fatalf("expected 1 incident")
+	}
+
+	// 15s después: sigue abierto
+	closed := agg.CheckQuietPeriods(now.Add(15 * time.Second))
+	if len(closed) != 0 {
+		t.Errorf("expected 0 closed at +15s, got %d", len(closed))
+	}
+	if agg.GetActiveIncidentFor("app1") == nil {
+		t.Errorf("expected incident to be active at +15s")
+	}
+
+	// 25s después: cerrado
+	closed = agg.CheckQuietPeriods(now.Add(25 * time.Second))
+	if len(closed) != 1 {
+		t.Errorf("expected 1 closed incident at +25s, got %d", len(closed))
+	}
+	if agg.GetActiveIncidentFor("app1") != nil {
+		t.Errorf("expected incident to be closed at +25s")
+	}
+}
+
+// Criterio 10: Cero vistas nuevas, '?' no lista V6, tecla 't' renombrada a Preferencias
+func TestTUI_Ola6_Criterio10_CeroVistasNuevas(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 100
+	m.height = 30
+	m.activeState = stateHelp
+
+	view := m.View()
+
+	// Prohibido crear V6
+	if strings.Contains(view, "V6") || strings.Contains(view, "v6") {
+		t.Errorf("help overlay must NOT list any 'V6' view, got:\n%s", view)
+	}
+
+	// 't' renombrada a Preferencias
+	if !strings.Contains(view, "t") || !strings.Contains(view, "Preferencias") {
+		t.Errorf("help overlay must list 't' as Preferencias, got:\n%s", view)
+	}
+
+	// Help incluye categoría Incidentes con 'd' y 'o'
+	if !strings.Contains(view, "Incidentes") {
+		t.Errorf("help overlay must include 'Incidentes' category, got:\n%s", view)
+	}
+	if !strings.Contains(view, "o") || !strings.Contains(view, "Marcar origen") {
+		t.Errorf("help overlay must include 'o' for Marcar origen, got:\n%s", view)
+	}
+}
+

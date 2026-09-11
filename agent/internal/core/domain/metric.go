@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ContainerMetric representa la telemetría calculada de un contenedor Docker en un instante dado.
 type ContainerMetric struct {
@@ -26,6 +29,17 @@ type ContainerMetric struct {
 	IPAddress           string    `json:"ip_address,omitempty"`
 	NetworkAliases      []string  `json:"network_aliases,omitempty"`
 	Timestamp           time.Time `json:"timestamp"`
+}
+
+// IsAnomalous evalúa si un contenedor presenta comportamiento anómalo.
+func IsAnomalous(c ContainerMetric) bool {
+	if strings.ToLower(c.Status) != "running" {
+		return true
+	}
+	if c.RAMLimitBytes > 0 && float64(c.RAMBytes)/float64(c.RAMLimitBytes) >= 0.85 {
+		return true
+	}
+	return false
 }
 
 // HostTelemetry agrupa las métricas de todos los contenedores de un host.

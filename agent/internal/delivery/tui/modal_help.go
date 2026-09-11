@@ -24,10 +24,13 @@ var DefaultKeyBindings = []KeyBinding{
 	{Key: "Enter / l", Description: "Ver logs", Category: "Navegación"},
 	{Key: "/", Description: "Buscar / Filtrar", Category: "Navegación"},
 
+	// Incidentes
+	{Key: "d", Description: "V4 diagnóstico/incidente", Category: "Incidentes"},
+	{Key: "o", Description: "Marcar origen", Category: "Incidentes"},
+
 	// Modelos de IA
 	{Key: "Tab", Description: "Ciclar modo IA", Category: "Modelos de IA"},
 	{Key: "c", Description: "Elegir modelo", Category: "Modelos de IA"},
-	{Key: "d", Description: "V4 diagnóstico", Category: "Modelos de IA"},
 	{Key: "i", Description: "Solicitar IA", Category: "Modelos de IA"},
 	{Key: "n", Description: "V5 red", Category: "Modelos de IA"},
 
@@ -38,7 +41,7 @@ var DefaultKeyBindings = []KeyBinding{
 	{Key: "e", Description: "Abrir terminal", Category: "Acciones"},
 
 	// General
-	{Key: "t", Description: "Temas y estilos", Category: "General"},
+	{Key: "t", Description: "Preferencias", Category: "General"},
 	{Key: "?", Description: "Ver esta ayuda", Category: "General"},
 	{Key: "q / Esc", Description: "Cerrar / Salir", Category: "General"},
 }
@@ -83,20 +86,25 @@ func (m Model) viewHelp() string {
 		catBindings[kb.Category] = append(catBindings[kb.Category], kb)
 	}
 
-	// Columna Izquierda: Navegación y Modelos de IA
+	// Columna Izquierda: Navegación e Incidentes
 	var leftLines []string
 	leftLines = append(leftLines, renderSectionHeader("Navegación"))
 	for _, kb := range catBindings["Navegación"] {
 		leftLines = append(leftLines, renderHelpRow(kb))
 	}
 	leftLines = append(leftLines, bgStyle.Render(strings.Repeat(" ", colW)))
-	leftLines = append(leftLines, renderSectionHeader("Modelos de IA"))
-	for _, kb := range catBindings["Modelos de IA"] {
+	leftLines = append(leftLines, renderSectionHeader("Incidentes"))
+	for _, kb := range catBindings["Incidentes"] {
 		leftLines = append(leftLines, renderHelpRow(kb))
 	}
 
-	// Columna Derecha: Acciones y General
+	// Columna Derecha: Modelos de IA, Acciones y General
 	var rightLines []string
+	rightLines = append(rightLines, renderSectionHeader("Modelos de IA"))
+	for _, kb := range catBindings["Modelos de IA"] {
+		rightLines = append(rightLines, renderHelpRow(kb))
+	}
+	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
 	rightLines = append(rightLines, renderSectionHeader("Acciones"))
 	for _, kb := range catBindings["Acciones"] {
 		rightLines = append(rightLines, renderHelpRow(kb))

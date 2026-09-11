@@ -69,6 +69,12 @@ type Model struct {
 	// Contenedores fijados (Pinning prioritario)
 	pinnedContainers map[string]bool
 
+	// Análisis de Incidentes Correlacionados (Ola 6)
+	incidentAggregator *service.IncidentAggregator
+	activeIncident     *service.Incident
+	v4IncidentCursor   int // Índice de contenedor enfocado en lista de miembros de incidente
+	preferencesCursor  int // 0: Temas y estilos, 1: Origen en banner
+
 	viewport         viewport.Model
 	selectedName     string
 	selectedID       string
@@ -168,6 +174,13 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		tc.SetCrashJournal(journal)
 	}
 
+	if themeCfg.IncidentBannerPolicy == "" {
+		themeCfg.IncidentBannerPolicy = "informativo"
+	}
+	if aiCfg.IncidentWindowSeconds <= 0 {
+		aiCfg.IncidentWindowSeconds = 30
+	}
+
 	themeCursor := 0
 	for idx, th := range domain.AvailableThemes {
 		if th.ID == themeCfg.ActiveTheme {
@@ -221,6 +234,7 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		discoveredModels:     make([]domain.ModelRef, 0),
 		viewport:             vp,
 		aiMeter:              service.NewAIMeter(),
+		incidentAggregator:   service.NewIncidentAggregator(aiCfg.IncidentWindowSeconds),
 		lastSync:             time.Now(),
 		width:                100,
 		height:               24,

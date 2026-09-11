@@ -326,6 +326,7 @@ var (
 	StyleTagAIPartial      lipgloss.Style
 	StyleTagRule           lipgloss.Style
 	StyleTagSignal         lipgloss.Style
+	StyleTagIncident       lipgloss.Style
 	StyleSparklineNormal   lipgloss.Style
 	StyleSparklineWarning  lipgloss.Style
 	StyleSparklineDanger   lipgloss.Style
@@ -481,6 +482,10 @@ func ApplyTheme(themeID, borderStyle string, nerdFonts bool) {
 	StyleTagSignal = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(ColorSubtext0)
+
+	StyleTagIncident = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorRed)
 
 	StyleSparklineNormal = lipgloss.NewStyle().Foreground(ColorGreen)
 	StyleSparklineWarning = lipgloss.NewStyle().Foreground(ColorPeach)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -163,7 +164,167 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case statePreferences:
+			switch msg.String() {
+			case "esc", "q":
+				m.activeState = stateFleetTable
+				return m, nil
+			case "up", "k":
+				if m.preferencesCursor > 0 {
+					m.preferencesCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.preferencesCursor < 1 {
+					m.preferencesCursor++
+				}
+				return m, nil
+			case "enter":
+				if m.preferencesCursor == 0 {
+					m.activeState = stateThemeModal
+					m.themeListCursor = 0
+					for idx, th := range domain.AvailableThemes {
+						if th.ID == m.themeConfig.ActiveTheme {
+							m.themeListCursor = idx
+							break
+						}
+					}
+					return m, nil
+				}
+				if m.preferencesCursor == 1 {
+					if m.themeConfig.IncidentBannerPolicy == "prudente" {
+						m.themeConfig.IncidentBannerPolicy = "informativo"
+					} else {
+						m.themeConfig.IncidentBannerPolicy = "prudente"
+					}
+					if m.vaultService != nil {
+						_ = m.vaultService.SaveThemeConfig(m.themeConfig)
+					}
+					return m, nil
+				}
+				return m, nil
+			}
+
 		case stateDiagnosisModal:
+			if m.activeIncident != nil {
+				containers := m.getIncidentContainersList()
+				hasActionRow := (m.activeIncident.ManualOrigin != "" || m.activeIncident.OriginConfidence != domain.ConfidenceUndetermined) && m.activeIncident.EffectiveOrigin() != ""
+				maxCursor := len(containers) - 1
+				if hasActionRow {
+					maxCursor = len(containers)
+				}
+
+				switch msg.String() {
+				case "esc", "q":
+					m.activeIncident = nil
+					m.activeState = stateFleetTable
+					return m, nil
+				case "up", "k":
+					if m.v4IncidentCursor > 0 {
+						m.v4IncidentCursor--
+					}
+					return m, nil
+				case "down", "j":
+					if m.v4IncidentCursor < maxCursor {
+						m.v4IncidentCursor++
+					}
+					return m, nil
+				case "o":
+					if m.v4IncidentCursor < len(containers) {
+						targetName := containers[m.v4IncidentCursor]
+						if m.incidentAggregator != nil {
+							m.incidentAggregator.SetManualOrigin(m.activeIncident.ID, targetName)
+						}
+					}
+					return m, nil
+				case "enter":
+					if m.v4IncidentCursor < len(containers) {
+						targetName := containers[m.v4IncidentCursor]
+						var targetMetric domain.ContainerMetric
+						if c, ok := m.activeIncident.Members[targetName]; ok {
+							targetMetric = c
+						} else {
+							for _, c := range m.metrics {
+								if strings.TrimPrefix(c.Name, "/") == targetName || c.ID == targetName {
+									targetMetric = c
+									break
+								}
+							}
+						}
+						m.activeIncident = nil
+						m.selectedID = targetMetric.ID
+						m.selectedName = targetMetric.Name
+						m.selectedState = targetMetric.Status
+						m.pendingContainer = targetMetric
+						m.v4ActionCursor = 0
+						m.activeState = stateDiagnosisModal
+						return m, nil
+					}
+					if hasActionRow && m.v4IncidentCursor == len(containers) {
+						originName := m.activeIncident.EffectiveOrigin()
+						var targetMetric domain.ContainerMetric
+						if c, ok := m.activeIncident.Members[originName]; ok {
+							targetMetric = c
+						} else {
+							for _, c := range m.metrics {
+								if strings.TrimPrefix(c.Name, "/") == originName || c.ID == originName {
+									targetMetric = c
+									break
+								}
+							}
+						}
+						m.pendingContainer = targetMetric
+						m.pendingAction = domain.ActionRestart
+						if m.activeIncident.Diagnosis.SuggestedAction == "stop" {
+							m.pendingAction = domain.ActionStop
+						} else if m.activeIncident.Diagnosis.SuggestedAction == "isolate" {
+							m.pendingAction = domain.ActionIsolateNetwork
+						}
+						m.confirmModalBtn = 0
+						m.activeState = stateConfirmRemediation
+						return m, nil
+					}
+					return m, nil
+				case "r", "s", "x":
+					originName := m.activeIncident.EffectiveOrigin()
+					if originName != "" {
+						var targetMetric domain.ContainerMetric
+						if c, ok := m.activeIncident.Members[originName]; ok {
+							targetMetric = c
+						} else {
+							for _, c := range m.metrics {
+								if strings.TrimPrefix(c.Name, "/") == originName || c.ID == originName {
+									targetMetric = c
+									break
+								}
+							}
+						}
+						m.pendingContainer = targetMetric
+						switch msg.String() {
+						case "r":
+							m.pendingAction = domain.ActionRestart
+						case "s":
+							m.pendingAction = domain.ActionStop
+						case "x":
+							m.pendingAction = domain.ActionIsolateNetwork
+						}
+						m.confirmModalBtn = 0
+						m.activeState = stateConfirmRemediation
+						return m, nil
+					}
+					return m, nil
+				case "i":
+					if m.activeIncident != nil && m.activeIncident.DiagnoseCount < 2 {
+						m.activeIncident.DiagnoseCount++
+						m.statusMessage = "[OK] Solicitando diagnóstico de incidente con IA..."
+						m.statusExpiry = time.Now().Add(4 * time.Second)
+						return m, m.triggerIncidentTriage(m.activeIncident)
+					}
+					return m, nil
+				}
+				return m, nil
+			}
+
 			actions := m.GetV4Actions(m.pendingContainer, m.diagnosisResults[m.selectedID])
 			switch msg.String() {
 			case "esc", "q":
@@ -668,9 +829,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedState = c.Status
 					m.pendingContainer = c
 					m.v4ActionCursor = 0
+					m.v4IncidentCursor = 0
+
+					if m.incidentAggregator != nil {
+						m.activeIncident = m.incidentAggregator.GetActiveIncidentFor(c.Name)
+						if m.activeIncident == nil {
+							m.activeIncident = m.incidentAggregator.GetActiveIncidentFor(c.ID)
+						}
+					} else {
+						m.activeIncident = nil
+					}
+
 					m.activeState = stateDiagnosisModal
-					if cmd := m.triggerTriageIfAnomalous(c); cmd != nil {
-						return m, cmd
+					if m.activeIncident == nil {
+						if cmd := m.triggerTriageIfAnomalous(c); cmd != nil {
+							return m, cmd
+						}
 					}
 					return m, nil
 				}
@@ -687,14 +861,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case "t":
-				m.activeState = stateThemeModal
-				m.themeListCursor = 0
-				for idx, th := range domain.AvailableThemes {
-					if th.ID == m.themeConfig.ActiveTheme {
-						m.themeListCursor = idx
-						break
-					}
-				}
+				m.activeState = statePreferences
+				m.preferencesCursor = 0
 				return m, nil
 
 			case "p":
@@ -796,6 +964,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.triagePending, msg.containerID)
 		return m, nil
 
+	case incidentDiagnosisResultMsg:
+		if m.incidentAggregator != nil {
+			for _, inc := range m.incidentAggregator.GetAllActiveIncidents() {
+				if inc.ID == msg.incidentID {
+					inc.Diagnosis = msg.result
+					if msg.result.OriginContainer != "" && inc.ManualOrigin == "" {
+						inc.CandidateOrigin = msg.result.OriginContainer
+					}
+					if len(msg.result.Cascade) > 0 {
+						inc.Cascade = msg.result.Cascade
+					}
+					break
+				}
+			}
+		}
+		if msg.usage.TotalTokens > 0 {
+			m.sessionTokensUsed += msg.usage.TotalTokens
+			m.sessionCostUSD += msg.usage.EstimatedCostUSD
+		}
+		if m.aiMeter != nil {
+			m.aiMeter.Record(m.aiConfig.ActiveProvider, domain.SlotDeep, m.aiConfig.ActiveModel, msg.usage, "", msg.result.RawOutput)
+		}
+		return m, nil
+
 	case remediationResultMsg:
 		if msg.err != nil {
 			m.statusMessage = fmt.Sprintf("[!!] Error ejecutando %s en '%s': %v", msg.action, msg.containerName, msg.err)
@@ -839,6 +1031,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for id := range m.metricsHistory {
 			if !activeIDs[id] {
 				delete(m.metricsHistory, id)
+			}
+		}
+
+		if m.incidentAggregator != nil {
+			depGraph := service.NewDependencyGraph(m.metrics)
+			now := time.Now()
+			newOrUpdated := m.incidentAggregator.IngestAnomalies(m.metrics, depGraph, m.crashJournal, now)
+			closedIncs := m.incidentAggregator.CheckQuietPeriods(now)
+
+			// Diagnóstico final al cierre del período quieto (Decisión I6)
+			for _, inc := range closedIncs {
+				if !inc.HasFinalDiagnosis && inc.DiagnoseCount < 2 && m.aiConfig.SelectionMode == domain.SelectionAuto {
+					inc.HasFinalDiagnosis = true
+					inc.DiagnoseCount++
+					cmds = append(cmds, m.triggerIncidentTriage(inc))
+				}
+			}
+
+			// Diagnóstico de apertura para nuevos incidentes (Decisión I6)
+			for _, inc := range newOrUpdated {
+				if inc.DiagnoseCount < 1 && m.aiConfig.SelectionMode == domain.SelectionAuto {
+					inc.DiagnoseCount++
+					cmds = append(cmds, m.triggerIncidentTriage(inc))
+				}
 			}
 		}
 

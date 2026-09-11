@@ -20,6 +20,7 @@ const (
 	stateThemeModal
 	stateDiagnosisModal
 	stateNetworkModal
+	statePreferences
 )
 
 type tickMsg time.Time
@@ -42,6 +43,12 @@ type diagnosisResultMsg struct {
 	diagnosis   string
 	usage       domain.TokenUsage
 	result      domain.DiagnosisResult
+}
+
+type incidentDiagnosisResultMsg struct {
+	incidentID string
+	result     domain.DiagnosisResult
+	usage      domain.TokenUsage
 }
 
 type shellFinishedMsg struct {

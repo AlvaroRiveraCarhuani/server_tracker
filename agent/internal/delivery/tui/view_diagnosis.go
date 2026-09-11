@@ -253,6 +253,10 @@ func (m Model) GetV4Actions(c domain.ContainerMetric, res domain.DiagnosisResult
 
 // viewDiagnosisModal renderiza el overlay centrado V4 de diagnóstico y observabilidad.
 func (m Model) viewDiagnosisModal() string {
+	if m.activeIncident != nil {
+		return m.viewIncidentDiagnosisModal()
+	}
+
 	modalWidth := 74
 	if m.width > 20 && m.width-4 < modalWidth {
 		modalWidth = m.width - 4
@@ -358,4 +362,202 @@ func formatDurationAgo(d time.Duration) string {
 		return fmt.Sprintf("hace %dm", int(d.Minutes()))
 	}
 	return fmt.Sprintf("hace %dh", int(d.Hours()))
+}
+
+func (m Model) getIncidentContainersList() []string {
+	if m.activeIncident == nil {
+		return nil
+	}
+	origin := m.activeIncident.EffectiveOrigin()
+	var list []string
+	seen := make(map[string]bool)
+	if origin != "" {
+		list = append(list, origin)
+		seen[origin] = true
+	}
+	for _, c := range m.activeIncident.Cascade {
+		if !seen[c] {
+			list = append(list, c)
+			seen[c] = true
+		}
+	}
+	for name := range m.activeIncident.Members {
+		clean := strings.TrimPrefix(name, "/")
+		if !seen[clean] {
+			list = append(list, clean)
+			seen[clean] = true
+		}
+	}
+	return list
+}
+
+// viewIncidentDiagnosisModal renderiza la superficie V4 en modo incidente (Decisión I5).
+func (m Model) viewIncidentDiagnosisModal() string {
+	inc := m.activeIncident
+	if inc == nil {
+		return ""
+	}
+
+	modalWidth := 74
+	if m.width > 20 && m.width-4 < modalWidth {
+		modalWidth = m.width - 4
+	}
+	innerW := modalWidth - 6
+
+	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(fmt.Sprintf("diagnóstico · incidente %s", inc.GroupName))
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
+	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
+
+	var lines []string
+
+	// 1. Diagnóstico Principal (Tag + Causa Raíz)
+	tagStyled := StyleTagIncident.Render("[INC]")
+	sourceTag := StyleTagRule.Render("[RULE]")
+	if inc.Diagnosis.Level == domain.LevelAI {
+		sourceTag = StyleTagAI.Render("[AI]")
+	} else if inc.Diagnosis.Level == domain.LevelAIPartial {
+		sourceTag = StyleTagAIPartial.Render("[AI~]")
+	}
+
+	rootCause := inc.Diagnosis.RootCause
+	if rootCause == "" {
+		rootCause = fmt.Sprintf("Cascada en %s", inc.GroupName)
+	}
+
+	titleRowLeft := fmt.Sprintf("%s %s", tagStyled, lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(rootCause))
+	spTitle := max(1, innerW-lipgloss.Width(titleRowLeft)-lipgloss.Width(sourceTag))
+	titleRow := titleRowLeft + strings.Repeat(" ", spTitle) + sourceTag
+	lines = append(lines, titleRow)
+	lines = append(lines, "")
+
+	// 2. Bloque Origen
+	originName := inc.EffectiveOrigin()
+	var originStatusLabel string
+	if inc.ManualOrigin != "" {
+		originStatusLabel = fmt.Sprintf("%s (manual)", originName)
+	} else {
+		switch inc.OriginConfidence {
+		case domain.ConfidenceConfirmed:
+			originStatusLabel = fmt.Sprintf("%s (confirmado)", originName)
+		case domain.ConfidenceProbable:
+			originStatusLabel = fmt.Sprintf("%s (probable)", originName)
+		default:
+			originStatusLabel = "sin determinar · señales en conflicto"
+		}
+	}
+
+	// Historial / Recurrencia del origen (Ola 4)
+	if m.crashJournal != nil && originName != "" {
+		c1h := m.crashJournal.Count(originName, "", 1*time.Hour)
+		if c1h >= 2 {
+			originStatusLabel += fmt.Sprintf(" (%d crashes en 1h)", c1h)
+		}
+	}
+
+	lines = append(lines, fmt.Sprintf("%s %s",
+		lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("origen:"),
+		lipgloss.NewStyle().Foreground(ColorText).Render(originStatusLabel),
+	))
+
+	if inc.OriginConfidence == domain.ConfidenceUndetermined && inc.ManualOrigin == "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · [o] sobre un contenedor para marcar origen manual"))
+	} else {
+		for _, ev := range inc.OriginEvidence {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  · %s", ev)))
+		}
+	}
+	lines = append(lines, "")
+
+	// 3. Bloque Timeline
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("timeline:"))
+	if len(inc.Events) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · sin eventos registrados"))
+	} else {
+		for _, ev := range inc.Events {
+			timeStr := ev.Timestamp.Format("15:04:05")
+			reasonStr := ev.Reason
+			if reasonStr == "" {
+				reasonStr = ev.Status
+			}
+			lines = append(lines, fmt.Sprintf("  · %s %s %s",
+				lipgloss.NewStyle().Foreground(ColorSubtext1).Render(timeStr),
+				lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(ev.ContainerName),
+				lipgloss.NewStyle().Foreground(ColorSubtext0).Render(reasonStr),
+			))
+		}
+	}
+
+	// 4. Bloque Cascada
+	if len(inc.Cascade) > 0 {
+		cascadeStr := strings.Join(inc.Cascade, " -> ") + " (inferido)"
+		lines = append(lines, fmt.Sprintf("%s %s",
+			lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("cascada:"),
+			lipgloss.NewStyle().Foreground(ColorText).Render(cascadeStr),
+		))
+	}
+	lines = append(lines, "")
+
+	// 5. Bloque Contenedores Navegables
+	containersList := m.getIncidentContainersList()
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("contenedores:"))
+	hasActionRow := (inc.ManualOrigin != "" || inc.OriginConfidence != domain.ConfidenceUndetermined) && originName != ""
+
+	for i, cName := range containersList {
+		isCursor := (i == m.v4IncidentCursor)
+		enterBadge := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("[Enter] diagnóstico")
+		oBadge := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("[o] origen")
+		if isCursor {
+			enterBadge = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[Enter] diagnóstico")
+			oBadge = lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[o] origen")
+		}
+
+		var row string
+		if isCursor {
+			ptr := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">")
+			nameStyled := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(fmt.Sprintf("%-14s", cName))
+			row = fmt.Sprintf("  %s %s  %s  %s", ptr, nameStyled, enterBadge, oBadge)
+		} else {
+			nameStyled := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("%-14s", cName))
+			row = fmt.Sprintf("    %s  %s  %s", nameStyled, enterBadge, oBadge)
+		}
+		lines = append(lines, row)
+	}
+	lines = append(lines, "")
+
+	// 6. Bloque Acción Sugerida
+	if hasActionRow {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("acción sugerida:"))
+		isActionCursor := (m.v4IncidentCursor == len(containersList))
+		actKey := "r"
+		actVerb := "restart"
+		if inc.Diagnosis.SuggestedAction == "stop" {
+			actKey = "s"
+			actVerb = "stop"
+		} else if inc.Diagnosis.SuggestedAction == "isolate" {
+			actKey = "x"
+			actVerb = "isolate"
+		}
+
+		var row string
+		if isActionCursor {
+			ptr := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">")
+			keyBadge := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(fmt.Sprintf("[%s]", actKey))
+			actionText := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(fmt.Sprintf("aplicar %s a %s (origen)", actVerb, originName))
+			row = fmt.Sprintf("  %s %s %s", ptr, keyBadge, actionText)
+		} else {
+			keyBadge := lipgloss.NewStyle().Foreground(ColorSubtext1).Render(fmt.Sprintf("[%s]", actKey))
+			actionText := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("aplicar %s a %s (origen)", actVerb, originName))
+			row = fmt.Sprintf("    %s %s", keyBadge, actionText)
+		}
+		lines = append(lines, row)
+		lines = append(lines, "")
+	}
+
+	footerHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
+	lines = append(lines, footerHint)
+
+	body := fmt.Sprintf("%s\n\n%s", header, strings.Join(lines, "\n"))
+	return StyleModal.Width(modalWidth).Render(body)
 }

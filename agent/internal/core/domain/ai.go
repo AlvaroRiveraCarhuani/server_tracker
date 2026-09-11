@@ -479,18 +479,20 @@ func (c ProviderConfig) MaskedKey() string {
 type AIConfig struct {
 	ActiveProvider AIProvider                    `json:"active_provider"`
 	ActiveModel    string                        `json:"active_model"`
-	SelectionMode  ModelSelectionMode            `json:"selection_mode,omitempty"`
-	SlotPolicy     SlotPolicy                    `json:"slot_policy,omitempty"`
-	Providers      map[AIProvider]ProviderConfig `json:"providers"`
+	SelectionMode         ModelSelectionMode            `json:"selection_mode,omitempty"`
+	SlotPolicy            SlotPolicy                    `json:"slot_policy,omitempty"`
+	IncidentWindowSeconds int                           `json:"incident_window_seconds,omitempty"`
+	Providers             map[AIProvider]ProviderConfig `json:"providers"`
 }
 
 // DefaultAIConfig genera la configuracion inicial con OpenRouter, Seleccion Auto y Slots por defecto.
 func DefaultAIConfig() AIConfig {
 	return AIConfig{
-		ActiveProvider: ProviderOpenRouter,
-		ActiveModel:    "openrouter/free",
-		SelectionMode:  SelectionAuto,
-		SlotPolicy:     DefaultSlotPolicy(),
+		ActiveProvider:        ProviderOpenRouter,
+		ActiveModel:           "openrouter/free",
+		SelectionMode:         SelectionAuto,
+		SlotPolicy:            DefaultSlotPolicy(),
+		IncidentWindowSeconds: 30,
 		Providers: map[AIProvider]ProviderConfig{
 			ProviderAnthropic:  {DefaultModel: "claude-3-5-haiku-latest"},
 			ProviderOpenAI:     {DefaultModel: "gpt-4o-mini"},
@@ -668,7 +670,26 @@ type DiagnosisResult struct {
 	TokenUsage      TokenUsage     `json:"token_usage,omitempty"`
 	RecurrenceCount int            `json:"recurrence_count,omitempty"`
 	RecurrenceNote  string         `json:"recurrence_note,omitempty"`
+	OriginContainer string         `json:"origin_container,omitempty"`
+	Cascade         []string       `json:"cascade,omitempty"`
 }
+
+// OriginConfidence representa el nivel de certeza sobre el contenedor que origino la cascada.
+type OriginConfidence string
+
+const (
+	ConfidenceConfirmed   OriginConfidence = "confirmado"
+	ConfidenceProbable    OriginConfidence = "probable"
+	ConfidenceUndetermined OriginConfidence = "s/d"
+)
+
+// IncidentBannerPolicy define la politica de presentacion de incidentes en el banner de estado.
+type IncidentBannerPolicy string
+
+const (
+	BannerPolicyInformativo IncidentBannerPolicy = "informativo"
+	BannerPolicyPrudente    IncidentBannerPolicy = "prudente"
+)
 
 func intPtr(i int) *int {
 	return &i

@@ -160,15 +160,59 @@ func (p *AIResponseParser) Parse(raw string, usage domain.TokenUsage, status str
 		confidence = "low"
 	}
 
+	// 5. origin_container (Ola 6)
+	originContainer := ""
+	if rawOrigin, ok := rawMap["origin_container"]; ok {
+		if origStr, ok := rawOrigin.(string); ok {
+			originContainer = strings.TrimSpace(origStr)
+		}
+	}
+
+	// 6. cascade (Ola 6)
+	var cascade []string
+	if rawCascade, ok := rawMap["cascade"]; ok {
+		if cascadeList, ok := rawCascade.([]interface{}); ok {
+			for _, item := range cascadeList {
+				if s, ok := item.(string); ok {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						cascade = append(cascade, s)
+					}
+				}
+			}
+		}
+	}
+
 	return domain.DiagnosisResult{
 		Level:           domain.LevelAI,
 		RootCause:       rootCause,
 		Severity:        severity,
 		SuggestedAction: suggestedAction,
 		Confidence:      confidence,
+		OriginContainer: originContainer,
+		Cascade:         cascade,
 		RawOutput:       singleLineRaw,
 		TokenUsage:      usage,
 	}
+}
+
+// SanitizeIncidentMembers filtra silenciosamente valores fuera del grupo conectado (Decisión 2).
+func (p *AIResponseParser) SanitizeIncidentMembers(res domain.DiagnosisResult, validMembers map[string]bool) domain.DiagnosisResult {
+	if res.OriginContainer != "" && !validMembers[res.OriginContainer] {
+		res.OriginContainer = ""
+	}
+
+	if len(res.Cascade) > 0 {
+		var filtered []string
+		for _, name := range res.Cascade {
+			if validMembers[name] {
+				filtered = append(filtered, name)
+			}
+		}
+		res.Cascade = filtered
+	}
+
+	return res
 }
 
 func (p *AIResponseParser) fallbackPartial(singleLineRaw string, usage domain.TokenUsage) domain.DiagnosisResult {

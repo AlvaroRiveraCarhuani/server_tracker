@@ -2,17 +2,19 @@ package domain
 
 // ThemeConfig almacena las preferencias estéticas del operador para la TUI.
 type ThemeConfig struct {
-	ActiveTheme string `json:"active_theme"` // "tokyo-night", "catppuccin", "gruvbox", "nord", "oled"
-	NerdFonts   bool   `json:"nerd_fonts"`   // true para glifos ricos, false para ASCII puro
-	BorderStyle string `json:"border_style"` // "double", "rounded", "sharp"
+	ActiveTheme          string `json:"active_theme"`           // "tokyo-night", "catppuccin", "gruvbox", "nord", "oled"
+	NerdFonts            bool   `json:"nerd_fonts"`             // true para glifos ricos, false para ASCII puro
+	BorderStyle          string `json:"border_style"`           // "double", "rounded", "sharp"
+	IncidentBannerPolicy string `json:"incident_banner_policy"` // "informativo" (default) o "prudente"
 }
 
 // DefaultThemeConfig devuelve la configuración estética predeterminada.
 func DefaultThemeConfig() ThemeConfig {
 	return ThemeConfig{
-		ActiveTheme: "tokyo-night",
-		NerdFonts:   true,
-		BorderStyle: "double",
+		ActiveTheme:          "tokyo-night",
+		NerdFonts:            true,
+		BorderStyle:          "double",
+		IncidentBannerPolicy: "informativo",
 	}
 }
 
