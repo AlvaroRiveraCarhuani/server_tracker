@@ -3341,3 +3341,69 @@ func TestTUI_Ola7_Criterio8_NoRegresionOlas0a6(t *testing.T) {
 	}
 }
 
+// Test interactivo: Tab alterna entre acciones y mini-scroll de evidencias con indicación clara
+func TestTUI_Ola7_EvidenciaMiniScrollYTab(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 80
+	m.height = 25 // modo compacto
+
+	now := time.Now()
+	// Contenedor con múltiples evidencias (RAM, CPU, exit, restarts, redes, historial)
+	c := domain.ContainerMetric{
+		ID:              "c-grafana",
+		Name:            "server_tracker-grafana",
+		Status:          "Exited (137)",
+		RAMBytes:        59 * 1024 * 1024,
+		RAMLimitBytes:   7832 * 1024 * 1024,
+		CPUPercent:      1.7,
+		RestartCount:    2,
+		Networks:        []string{"solv_net"},
+		LastStateChange: now.Add(-4 * time.Minute),
+	}
+
+	m1, _ := m.Update([]domain.ContainerMetric{c})
+	mod := m1.(Model)
+
+	// Abrir diagnóstico individual
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	diagMod := m2.(Model)
+	if diagMod.activeState != stateDiagnosisModal {
+		t.Fatalf("expected stateDiagnosisModal, got %v", diagMod.activeState)
+	}
+
+	view1 := diagMod.View()
+
+	// Debe mencionar explícitamente Tab o cómo scrollear
+	if !strings.Contains(view1, "Tab") && !strings.Contains(view1, "tab") {
+		t.Errorf("view must indicate [Tab] to scroll evidences, got:\n%s", view1)
+	}
+
+	// Presionar Tab: cambia el foco a sección evidencia
+	m3, _ := diagMod.Update(tea.KeyMsg{Type: tea.KeyTab})
+	focusMod := m3.(Model)
+	if focusMod.v4FocusSection != 1 {
+		t.Errorf("expected v4FocusSection == 1 after Tab, got %d", focusMod.v4FocusSection)
+	}
+
+	view2 := focusMod.View()
+	if !strings.Contains(view2, "activo • ↑/↓ para scrollear") {
+		t.Errorf("view must indicate active evidence scroll mode, got:\n%s", view2)
+	}
+
+	// Presionar 'j' / 'down' para scrollear hacia abajo en evidencias
+	m4, _ := focusMod.Update(tea.KeyMsg{Type: tea.KeyDown})
+	scrollMod := m4.(Model)
+	if scrollMod.v4EvidenceScroll != 1 {
+		t.Errorf("expected v4EvidenceScroll == 1 after Down, got %d", scrollMod.v4EvidenceScroll)
+	}
+
+	// Presionar Tab de nuevo: vuelve a acciones
+	m5, _ := scrollMod.Update(tea.KeyMsg{Type: tea.KeyTab})
+	backMod := m5.(Model)
+	if backMod.v4FocusSection != 0 {
+		t.Errorf("expected v4FocusSection == 0 after second Tab, got %d", backMod.v4FocusSection)
+	}
+}
+
+

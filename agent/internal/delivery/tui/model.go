@@ -94,6 +94,8 @@ type Model struct {
 	overlayScrollOffset int
 	toastVisible        bool
 	toastExpiry         time.Time
+	v4FocusSection      int 
+	v4EvidenceScroll    int 
 }
 
 // NewModel inicializa el modelo de la TUI con soporte de bóveda para AIOps.

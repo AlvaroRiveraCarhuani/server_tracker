@@ -352,25 +352,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			actions := m.GetV4Actions(m.pendingContainer, m.diagnosisResults[m.selectedID])
+			evidences := BuildEvidence(m, m.pendingContainer, m.diagnosisResults[m.selectedID], "")
+			hasEvScroll := m.height < 30 && len(evidences) > 4
+
 			switch msg.String() {
 			case "esc", "q":
+				m.v4FocusSection = 0
+				m.v4EvidenceScroll = 0
 				m.activeState = stateFleetTable
 				return m, nil
+
+			case "tab":
+				if hasEvScroll {
+					if m.v4FocusSection == 0 {
+						m.v4FocusSection = 1
+					} else {
+						m.v4FocusSection = 0
+					}
+				}
+				return m, nil
+
 			case "up", "k":
-				if m.v4ActionCursor > 0 {
-					m.v4ActionCursor--
-				}
-				if m.overlayScrollOffset > 0 {
-					m.overlayScrollOffset--
+				if m.v4FocusSection == 1 {
+					if m.v4EvidenceScroll > 0 {
+						m.v4EvidenceScroll--
+					}
+				} else {
+					if m.v4ActionCursor > 0 {
+						m.v4ActionCursor--
+					}
+					if m.overlayScrollOffset > 0 {
+						m.overlayScrollOffset--
+					}
 				}
 				return m, nil
+
 			case "down", "j":
-				if len(actions) > 0 && m.v4ActionCursor < len(actions)-1 {
-					m.v4ActionCursor++
+				if m.v4FocusSection == 1 {
+					if m.v4EvidenceScroll < len(evidences)-4 {
+						m.v4EvidenceScroll++
+					}
+				} else {
+					if len(actions) > 0 && m.v4ActionCursor < len(actions)-1 {
+						m.v4ActionCursor++
+					}
+					m.overlayScrollOffset++
 				}
-				m.overlayScrollOffset++
 				return m, nil
+
 			case "enter":
+				if m.v4FocusSection == 1 {
+					m.v4FocusSection = 0
+					return m, nil
+				}
 				if len(actions) > 0 && m.v4ActionCursor < len(actions) {
 					act := actions[m.v4ActionCursor]
 					if act.IsLogs {

@@ -302,18 +302,53 @@ func (m Model) viewDiagnosisModal() string {
 	}
 	lines = append(lines, "")
 
-	// 2. Sección de Evidencia Tipada
-	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("evidencia:"))
+	// 2. Sección de Evidencia Tipada (con soporte de mini-scroll por Tab F3)
 	evidences := BuildEvidence(m, m.pendingContainer, res, "")
+	compact := m.height < 30
+	needsScroll := compact && len(evidences) > 4
+
+	evidenceTitle := "evidencia:"
+	titleColor := ColorLavender
+	if needsScroll {
+		if m.v4FocusSection == 1 {
+			evidenceTitle = "evidencia [activo • ↑/↓ para scrollear]:"
+			titleColor = ColorPeach
+		} else {
+			evidenceTitle = "evidencia [pulsa Tab para scrollear]:"
+		}
+	}
+	lines = append(lines, lipgloss.NewStyle().Foreground(titleColor).Bold(true).Render(evidenceTitle))
+
 	if len(evidences) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · sin telemetría anómala registrada"))
-	} else {
-		compact := m.height < 30
-		maxEv := len(evidences)
-		if compact && maxEv > 4 {
-			maxEv = 4
+	} else if !needsScroll {
+		for _, ev := range evidences {
+			dot := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("  ·")
+			if ev.Type == "red" {
+				label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label)
+				val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
+				lines = append(lines, fmt.Sprintf("%s %s · %s", dot, label, val))
+			} else {
+				label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label + ":")
+				val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
+				lines = append(lines, fmt.Sprintf("%s %s %s", dot, label, val))
+			}
 		}
-		for i := 0; i < maxEv; i++ {
+	} else {
+		windowSize := 4
+		maxScroll := len(evidences) - windowSize
+		offset := max(0, min(m.v4EvidenceScroll, maxScroll))
+
+		if offset > 0 {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · ↑ más arriba"))
+		}
+
+		end := offset + windowSize
+		if end > len(evidences) {
+			end = len(evidences)
+		}
+
+		for i := offset; i < end; i++ {
 			ev := evidences[i]
 			dot := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("  ·")
 			if ev.Type == "red" {
@@ -326,18 +361,32 @@ func (m Model) viewDiagnosisModal() string {
 				lines = append(lines, fmt.Sprintf("%s %s %s", dot, label, val))
 			}
 		}
-		if compact && len(evidences) > 4 {
-			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  · +%d más", len(evidences)-4)))
+
+		remaining := len(evidences) - end
+		if remaining > 0 {
+			if m.v4FocusSection == 1 {
+				lines = append(lines, lipgloss.NewStyle().Foreground(ColorPeach).Render(
+					fmt.Sprintf("  · ↓ +%d más (usa ↓ para bajar)", remaining),
+				))
+			} else {
+				lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
+					fmt.Sprintf("  · +%d más · pulsa [Tab] para scrollear", remaining),
+				))
+			}
 		}
 	}
 	lines = append(lines, "")
 
 	// 3. Acciones Sugeridas Navegables
-	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("acción sugerida:"))
+	actionTitle := "acción sugerida:"
+	if needsScroll && m.v4FocusSection == 0 {
+		actionTitle = "acción sugerida [activo]:"
+	}
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render(actionTitle))
 	actions := m.GetV4Actions(m.pendingContainer, res)
 
 	for i, act := range actions {
-		isCursor := i == m.v4ActionCursor
+		isCursor := i == m.v4ActionCursor && m.v4FocusSection == 0
 		var row string
 		if isCursor {
 			ptr := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">")
@@ -353,7 +402,16 @@ func (m Model) viewDiagnosisModal() string {
 	}
 
 	lines = append(lines, "")
-	footerHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
+	var footerHint string
+	if needsScroll {
+		if m.v4FocusSection == 1 {
+			footerHint = lipgloss.NewStyle().Foreground(ColorPeach).Render("↑/↓: scrollear evidencia  ·  tab: ir a acciones  ·  esc: volver")
+		} else {
+			footerHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  tab: scrollear evidencia  ·  ↑/↓: seleccionar  ·  esc: volver")
+		}
+	} else {
+		footerHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
+	}
 	lines = append(lines, footerHint)
 
 	// Scroll y Viewport (F3)
