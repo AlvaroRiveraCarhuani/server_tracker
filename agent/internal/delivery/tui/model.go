@@ -26,6 +26,7 @@ type Model struct {
 	triageClient       TriageService
 	ruleEngine         *service.RuleEngine
 	crashJournal       *service.CrashJournal
+	reExecutedEvents   map[string]bool
 	diagnosisResults   map[string]domain.DiagnosisResult
 	diagnosisCache     map[string]string
 	lastDiagnosisUsage map[string]domain.TokenUsage
@@ -59,6 +60,7 @@ type Model struct {
 	// Métricas de consumo AIOps
 	sessionTokensUsed int
 	sessionCostUSD    float64
+	aiMeter           *service.AIMeter
 
 	// Estado del Selector de Temas y Tipografía
 	themeConfig     domain.ThemeConfig
@@ -185,12 +187,15 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		}
 	}
 
+	ruleEng := service.NewRuleEngine()
+
 	return Model{
 		collector:            collector,
 		vaultService:         vaultSvc,
 		triageClient:         triageClient,
-		ruleEngine:           service.NewRuleEngine(),
+		ruleEngine:           ruleEng,
 		crashJournal:         journal,
+		reExecutedEvents:     make(map[string]bool),
 		catalogService:       catSvc,
 		diagnosisResults:     make(map[string]domain.DiagnosisResult),
 		diagnosisCache:       make(map[string]string),
@@ -215,6 +220,7 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		discoveredConnectors: make(map[domain.AIProvider]ai.DiscoveryResult),
 		discoveredModels:     make([]domain.ModelRef, 0),
 		viewport:             vp,
+		aiMeter:              service.NewAIMeter(),
 		lastSync:             time.Now(),
 		width:                100,
 		height:               24,
@@ -377,6 +383,7 @@ func (m Model) triggerTriage(c domain.ContainerMetric, forceAI bool) tea.Cmd {
 
 			uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient, m.ruleEngine)
 			uc.SetCrashJournal(m.crashJournal)
+			uc.SetReExecutedMap(m.reExecutedEvents)
 			res := uc.ExecuteWithCascade(ctx, c, false, domain.SelectionManual)
 
 			return diagnosisResultMsg{
@@ -403,6 +410,7 @@ func (m Model) triggerTriage(c domain.ContainerMetric, forceAI bool) tea.Cmd {
 
 		uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient, m.ruleEngine)
 		uc.SetCrashJournal(m.crashJournal)
+		uc.SetReExecutedMap(m.reExecutedEvents)
 		res := uc.ExecuteWithCascade(ctx, c, forceAI, m.aiConfig.SelectionMode)
 
 		return diagnosisResultMsg{

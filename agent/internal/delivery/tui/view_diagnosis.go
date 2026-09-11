@@ -183,6 +183,26 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 		}
 	}
 
+	// 8. Evidencia de Proceso e IA (Ola 5)
+	if res.Confidence == "low" {
+		items = append(items, EvidenceItem{
+			Type:  "proceso",
+			Label: "proceso",
+			Value: "confianza del modelo: baja",
+		})
+	}
+	if res.ReanalyzedDeep || res.ProcessNote != "" {
+		note := res.ProcessNote
+		if note == "" {
+			note = "re-analizado en DEEP por severidad crítica"
+		}
+		items = append(items, EvidenceItem{
+			Type:  "proceso",
+			Label: "proceso",
+			Value: note,
+		})
+	}
+
 	return items
 }
 

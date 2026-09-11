@@ -550,6 +550,11 @@ func (m Model) viewAIProviders() string {
 		}
 
 		line := fmt.Sprintf("%s %s", nameCol, statusBadge)
+		if m.aiMeter != nil {
+			if statsStr := m.aiMeter.FormatProviderStats(r.providerID); statsStr != "" {
+				line = fmt.Sprintf("%s  · %s", line, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(statsStr))
+			}
+		}
 		rowStyle := lipgloss.NewStyle().Padding(0, 1).Width(contentWidth)
 		if isFocused {
 			rowStyle = rowStyle.Background(ColorSurface0)

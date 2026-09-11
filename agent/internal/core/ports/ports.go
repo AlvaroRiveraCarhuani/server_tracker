@@ -45,4 +45,5 @@ type TransportPort interface {
 type TriagePort interface {
 	DiagnoseContainer(ctx context.Context, name, image, status, logs string) string
 	DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage)
+	DiagnoseContainerWithSlot(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage)
 }

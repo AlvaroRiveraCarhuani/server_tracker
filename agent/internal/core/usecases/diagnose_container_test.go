@@ -38,6 +38,7 @@ func (m *mockCollectorPort) ExecuteRemediation(ctx context.Context, cmd domain.R
 type mockTriagePort struct {
 	diagnoseFn          func(ctx context.Context, name, image, status, logs string) string
 	diagnoseWithUsageFn func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage)
+	diagnoseWithSlotFn  func(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage)
 }
 
 func (m *mockTriagePort) DiagnoseContainer(ctx context.Context, name, image, status, logs string) string {
@@ -52,6 +53,13 @@ func (m *mockTriagePort) DiagnoseContainerWithUsage(ctx context.Context, name, i
 		return m.diagnoseWithUsageFn(ctx, name, image, status, logs)
 	}
 	return "mock-diag-usage", domain.TokenUsage{TotalTokens: 100, EstimatedCostUSD: 0.001}
+}
+
+func (m *mockTriagePort) DiagnoseContainerWithSlot(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+	if m.diagnoseWithSlotFn != nil {
+		return m.diagnoseWithSlotFn(ctx, name, image, status, logs, slot)
+	}
+	return m.DiagnoseContainerWithUsage(ctx, name, image, status, logs)
 }
 
 func TestDiagnoseContainerUseCase_Success(t *testing.T) {
@@ -113,7 +121,7 @@ func TestDiagnoseContainerUseCase_ExecuteWithCascade(t *testing.T) {
 	t.Run("Level 0 AI: Valid structured response", func(t *testing.T) {
 		triage := &mockTriagePort{
 			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
-				return "[OOM detectado -> reiniciar servicio]", domain.TokenUsage{TotalTokens: 80}
+				return `{"root_cause":"OOM detectado","severity":"critical","suggested_action":"restart","confidence":"high"}`, domain.TokenUsage{TotalTokens: 80}
 			},
 		}
 		uc := NewDiagnoseContainerUseCase(collector, triage)
@@ -133,7 +141,7 @@ func TestDiagnoseContainerUseCase_ExecuteWithCascade(t *testing.T) {
 	t.Run("Level 1 AI~: Raw non-structured output", func(t *testing.T) {
 		triage := &mockTriagePort{
 			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
-				return "El contenedor ha finalizado debido a un error no especificado en la rutina principal", domain.TokenUsage{TotalTokens: 90}
+				return "Lo siento, como modelo de lenguaje no puedo determinar...", domain.TokenUsage{TotalTokens: 30}
 			},
 		}
 		uc := NewDiagnoseContainerUseCase(collector, triage)
@@ -145,12 +153,15 @@ func TestDiagnoseContainerUseCase_ExecuteWithCascade(t *testing.T) {
 		if res.Level != domain.LevelAIPartial {
 			t.Errorf("expected LevelAIPartial, got %v", res.Level)
 		}
+		if res.SuggestedAction != "none" {
+			t.Errorf("expected suggested action none for partial AI, got %s", res.SuggestedAction)
+		}
 	})
 
 	t.Run("Level 2 RULE: AI failure fallback to rule", func(t *testing.T) {
 		triage := &mockTriagePort{
 			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
-				return "Error HTTP 429 Too Many Requests", domain.TokenUsage{}
+				return "Diagnóstico no configurado (sin API key)", domain.TokenUsage{}
 			},
 		}
 		uc := NewDiagnoseContainerUseCase(collector, triage)
@@ -172,7 +183,7 @@ func TestDiagnoseContainerUseCase_ExecuteWithCascade(t *testing.T) {
 		triage := &mockTriagePort{
 			diagnoseWithUsageFn: func(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
 				calledAI = true
-				return "[Error de red -> reintentar conexión]", domain.TokenUsage{}
+				return `{"root_cause":"Error de red","severity":"warning","suggested_action":"none","confidence":"high"}`, domain.TokenUsage{}
 			},
 		}
 		uc := NewDiagnoseContainerUseCase(collector, triage)
@@ -219,5 +230,53 @@ func TestDiagnoseContainerUseCase_ExecuteWithCascade(t *testing.T) {
 			t.Errorf("unexpected root cause: %s", res.RootCause)
 		}
 	})
+
+	t.Run("S2: Critical severity in FAST triggers bounded re-execution in DEEP", func(t *testing.T) {
+		fastCalls := 0
+		deepCalls := 0
+
+		triage := &mockTriagePort{
+			diagnoseWithSlotFn: func(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+				if slot == domain.SlotDeep {
+					deepCalls++
+					return `{"root_cause":"Leak crítico confirmado en worker","severity":"critical","suggested_action":"restart","confidence":"high"}`, domain.TokenUsage{TotalTokens: 200}
+				}
+				fastCalls++
+				return `{"root_cause":"Posible OOM crítico","severity":"critical","suggested_action":"restart","confidence":"high"}`, domain.TokenUsage{TotalTokens: 80}
+			},
+		}
+
+		uc := NewDiagnoseContainerUseCase(collector, triage)
+		c := domain.ContainerMetric{
+			ID:     "c-crit",
+			Status: "exited (137)",
+		}
+
+		// Primera llamada: FAST -> DEEP
+		res1 := uc.ExecuteWithCascade(context.Background(), c, false, domain.SelectionAuto)
+
+		if fastCalls != 1 {
+			t.Errorf("expected 1 FAST call, got %d", fastCalls)
+		}
+		if deepCalls != 1 {
+			t.Errorf("expected 1 DEEP call, got %d", deepCalls)
+		}
+		if !res1.ReanalyzedDeep {
+			t.Errorf("expected ReanalyzedDeep to be true")
+		}
+		if res1.ProcessNote != "re-analizado en DEEP por severidad crítica" {
+			t.Errorf("unexpected ProcessNote: %q", res1.ProcessNote)
+		}
+		if res1.RootCause != "Leak crítico confirmado en worker" {
+			t.Errorf("expected DEEP root cause to replace FAST, got %q", res1.RootCause)
+		}
+
+		// Segunda llamada para el mismo evento: no debe re-ejecutar DEEP de nuevo
+		_ = uc.ExecuteWithCascade(context.Background(), c, false, domain.SelectionAuto)
+		if deepCalls != 1 {
+			t.Errorf("expected still 1 DEEP call (deduped), got %d", deepCalls)
+		}
+	})
 }
+
 

@@ -661,6 +661,9 @@ type DiagnosisResult struct {
 	RootCause       string         `json:"root_cause"`
 	Severity        string         `json:"severity"`
 	SuggestedAction string         `json:"suggested_action"`
+	Confidence      string         `json:"confidence,omitempty"` // "high", "medium", "low"
+	ReanalyzedDeep  bool           `json:"reanalyzed_deep,omitempty"`
+	ProcessNote     string         `json:"process_note,omitempty"`
 	RawOutput       string         `json:"raw_output,omitempty"`
 	TokenUsage      TokenUsage     `json:"token_usage,omitempty"`
 	RecurrenceCount int            `json:"recurrence_count,omitempty"`

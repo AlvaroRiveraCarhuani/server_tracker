@@ -497,47 +497,80 @@ func (m Model) viewTable() string {
 			}
 
 			// En modo MANUAL, si el banner es [RULE] o [SIG], agregar hint explícito para inferir con IA
+			// 1. Extraer la causa raíz base limpia (sin sufijo recurrente si lo tenía)
+			baseRootCause := diagText
+			recTagText := ""
+			if hasRes && res.RecurrenceCount >= 3 {
+				recTagText = fmt.Sprintf("recurrente (%d/1h)", res.RecurrenceCount)
+				baseRootCause = strings.TrimSpace(strings.Replace(baseRootCause, recTagText, "", 1))
+			}
+
+			// 2. Confianza baja (S3)
+			confTagText := ""
+			if hasRes && res.Confidence == "low" {
+				confTagText = "· conf baja"
+			}
+
+			// 3. Atajo de detalle
+			detailHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("· [d] detalle")
+
+			// 4. Atajo manual si aplica
 			manualHint := ""
 			if m.aiConfig.SelectionMode == domain.SelectionManual && (!hasRes || res.Level == domain.LevelRule || res.Level == domain.LevelSignal) {
 				if m.width <= 90 {
-					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(" · [i] IA")
+					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render("· [i] IA")
 				} else {
-					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(" · [i] solicitar diagnóstico IA")
+					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render("· [i] solicitar diagnóstico IA")
 				}
-			}
-
-			detailHint := ""
-			if hasRes && res.RecurrenceCount >= 3 {
-				detailHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(" · [d] detalle")
 			}
 
 			bannerWidth := max(40, m.width-2)
-			rawBannerLen := lipgloss.Width(tagStyled) + 1 + lipgloss.Width(diagText) + lipgloss.Width(manualHint) + lipgloss.Width(detailHint) + lipgloss.Width(usageBadge)
-			if rawBannerLen > bannerWidth {
-				if hasRes && res.RecurrenceCount >= 3 {
-					recTag := fmt.Sprintf("recurrente (%d/1h)", res.RecurrenceCount)
-					if strings.Contains(diagText, recTag) {
-						baseText := strings.TrimSpace(strings.Replace(diagText, recTag, "", 1))
-						availForBase := bannerWidth - lipgloss.Width(tagStyled) - 1 - lipgloss.Width(recTag) - 1 - lipgloss.Width(detailHint) - lipgloss.Width(manualHint) - lipgloss.Width(usageBadge) - 3
-						if availForBase > 5 {
-							baseText = truncate(baseText, availForBase)
-							diagText = fmt.Sprintf("%s %s", baseText, recTag)
-						}
-					} else {
-						avail := bannerWidth - lipgloss.Width(tagStyled) - lipgloss.Width(manualHint) - lipgloss.Width(detailHint) - lipgloss.Width(usageBadge) - 3
-						if avail > 10 {
-							diagText = truncate(diagText, avail)
-						}
-					}
-				} else {
-					avail := bannerWidth - lipgloss.Width(tagStyled) - lipgloss.Width(manualHint) - lipgloss.Width(detailHint) - lipgloss.Width(usageBadge) - 3
-					if avail > 10 {
-						diagText = truncate(diagText, avail)
-					}
+
+			// Función para componer la línea con segmentos condicionales
+			buildBanner := func(cause string, includeRec, includeConf bool) string {
+				parts := []string{tagStyled, cause}
+				if includeRec && recTagText != "" {
+					parts = append(parts, recTagText)
+				}
+				if includeConf && confTagText != "" {
+					parts = append(parts, lipgloss.NewStyle().Foreground(ColorPeach).Render(confTagText))
+				}
+				parts = append(parts, detailHint)
+				if manualHint != "" {
+					parts = append(parts, manualHint)
+				}
+				if usageBadge != "" {
+					parts = append(parts, usageBadge)
+				}
+				return strings.Join(parts, " ")
+			}
+
+			// Intento 1: Todos los segmentos (orden determinista)
+			bannerContent := buildBanner(baseRootCause, true, true)
+			if lipgloss.Width(bannerContent) > bannerWidth {
+				// Cae primero '· conf baja'
+				bannerContent = buildBanner(baseRootCause, true, false)
+			}
+			if lipgloss.Width(bannerContent) > bannerWidth {
+				// Cae segundo 'recurrente (N/1h)'
+				bannerContent = buildBanner(baseRootCause, false, false)
+			}
+			if lipgloss.Width(bannerContent) > bannerWidth {
+				// Cae root_cause último con truncate(...)
+				fixedLen := lipgloss.Width(tagStyled) + 1 + lipgloss.Width(detailHint) + 1
+				if manualHint != "" {
+					fixedLen += lipgloss.Width(manualHint) + 1
+				}
+				if usageBadge != "" {
+					fixedLen += lipgloss.Width(usageBadge) + 1
+				}
+				avail := bannerWidth - fixedLen - 2
+				if avail > 5 {
+					truncatedCause := truncate(baseRootCause, avail)
+					bannerContent = buildBanner(truncatedCause, false, false)
 				}
 			}
 
-			bannerContent := fmt.Sprintf("%s %s%s%s%s", tagStyled, diagText, detailHint, manualHint, usageBadge)
 			b.WriteString(StyleAIOpsBanner.Width(bannerWidth).Render(bannerContent) + "\n")
 		}
 	}
@@ -553,16 +586,17 @@ func (m Model) viewTable() string {
 			if m.filterValue != "" {
 				filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
 			}
-			aiStatsTag := ""
-			if m.sessionTokensUsed > 0 {
-				aiStatsTag = fmt.Sprintf("  |  %d tok (~$%.3f)", m.sessionTokensUsed, m.sessionCostUSD)
-			}
 
 			// Token V0 de Modo AIOps
 			modeToken := ""
 			switch m.aiConfig.SelectionMode {
 			case domain.SelectionAuto:
-				modeToken = "[Tab] modo: AUTO (deriva por severidad)"
+				fastM := domain.GetAssignedModel(domain.SlotFast, m.aiConfig.SlotPolicy)
+				disp := fastM.DisplayName
+				if disp == "" {
+					disp = fastM.ID
+				}
+				modeToken = fmt.Sprintf("[Tab] modo: AUTO · %s (%s)", disp, modelTag(fastM))
 			case domain.SelectionFast:
 				fastM := domain.GetAssignedModel(domain.SlotFast, m.aiConfig.SlotPolicy)
 				disp := fastM.DisplayName
@@ -580,10 +614,16 @@ func (m Model) viewTable() string {
 			case domain.SelectionManual:
 				modeToken = fmt.Sprintf("[Tab] modo: MANUAL · %s", m.aiConfig.ActiveModel)
 			default:
-				modeToken = "[Tab] modo: AUTO (deriva por severidad)"
+				modeToken = "[Tab] modo: AUTO"
 			}
 
-			shortcuts := fmt.Sprintf("%s  |  [j/k]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s%s", modeToken, filterTag, aiStatsTag)
+			sessionStr := "sesión: 0 req · ~$0.00"
+			if m.aiMeter != nil {
+				sessionStr = m.aiMeter.FormatStatusBar()
+			}
+			modeTokenWithSession := fmt.Sprintf("%s · %s", modeToken, sessionStr)
+
+			shortcuts := fmt.Sprintf("%s  |  [j/k]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [c]: IA  |  [t]: Temas  |  [/]: Filtro%s", modeTokenWithSession, filterTag)
 			b.WriteString(StyleStatusBar.Render(shortcuts))
 		}
 	}

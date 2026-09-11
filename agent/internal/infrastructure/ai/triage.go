@@ -98,11 +98,40 @@ func (c *TriageClient) DiagnoseContainer(ctx context.Context, name, image, statu
 
 // DiagnoseContainerWithUsage analiza logs y estado retornando el diagnóstico junto con el consumo de tokens y costo estimado.
 func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
+	return c.DiagnoseContainerWithSlot(ctx, name, image, status, logs, "")
+}
+
+// DiagnoseContainerWithSlot analiza logs y estado forzando un slot específico si se provee.
+func (c *TriageClient) DiagnoseContainerWithSlot(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
 	provider := c.config.ActiveProvider
 	model := c.config.ActiveModel
 
-	// Dynamic resolution according to SelectionMode and SlotPolicy
-	if c.catalogService != nil {
+	// Dynamic resolution according to explicit slot, SelectionMode and SlotPolicy
+	if slot == domain.SlotFast {
+		m := domain.GetAssignedModel(domain.SlotFast, c.config.SlotPolicy)
+		if m.ID != "" {
+			provider = m.ProviderID
+			model = m.ID
+		} else if c.catalogService != nil {
+			slotM, _ := c.catalogService.GetSlotFast()
+			if slotM.ID != "" {
+				provider = slotM.ProviderID
+				model = slotM.ID
+			}
+		}
+	} else if slot == domain.SlotDeep {
+		m := domain.GetAssignedModel(domain.SlotDeep, c.config.SlotPolicy)
+		if m.ID != "" {
+			provider = m.ProviderID
+			model = m.ID
+		} else if c.catalogService != nil {
+			slotM, _ := c.catalogService.GetSlotDeep()
+			if slotM.ID != "" {
+				provider = slotM.ProviderID
+				model = slotM.ID
+			}
+		}
+	} else if c.catalogService != nil {
 		switch c.config.SelectionMode {
 		case domain.SelectionAuto:
 			isSevere := strings.Contains(strings.ToLower(status), "oom") ||
@@ -180,9 +209,15 @@ func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, ima
 		model = meta.DefaultModel
 	}
 
-	systemPrompt := "Eres el motor de diagnóstico AIOps para la TUI de SOLV Server Tracker. " +
-		"Analiza el fallo y responde ÚNICAMENTE en exactamente UNA línea breve sin formato ni asteriscos: " +
-		"[Causa probable -> Acción recomendada]"
+	systemPrompt := "Eres el motor de diagnóstico AIOps para la TUI de SOLV Server Tracker.\n" +
+		"Analiza el fallo y responde ÚNICAMENTE con un objeto JSON válido con exactamente estos 4 campos:\n" +
+		"{\n" +
+		`  "root_cause": "<causa raíz en 1 frase>",` + "\n" +
+		`  "severity": "critical" | "warning" | "info",` + "\n" +
+		`  "suggested_action": "restart" | "stop" | "isolate" | "none",` + "\n" +
+		`  "confidence": "high" | "medium" | "low"` + "\n" +
+		"}\n" +
+		"Responde SOLO el objeto JSON, sin prosa previa ni posterior, sin bloques de código markdown."
 
 	// Limitar logs a últimas 1200 runas para no gastar cuota innecesaria
 	trimmedLogs := logs

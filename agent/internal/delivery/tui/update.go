@@ -784,6 +784,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionTokensUsed += msg.usage.TotalTokens
 			m.sessionCostUSD += msg.usage.EstimatedCostUSD
 		}
+		if m.aiMeter != nil && (msg.result.Level == domain.LevelAI || msg.result.Level == domain.LevelAIPartial) {
+			if msg.result.ReanalyzedDeep {
+				// Contabilizar FAST + DEEP (+2 req) para este evento re-ejecutado
+				m.aiMeter.Record(m.aiConfig.ActiveProvider, domain.SlotFast, m.aiConfig.ActiveModel, domain.TokenUsage{}, "", "")
+				m.aiMeter.Record(m.aiConfig.ActiveProvider, domain.SlotDeep, m.aiConfig.ActiveModel, msg.usage, "", msg.result.RawOutput)
+			} else {
+				m.aiMeter.Record(m.aiConfig.ActiveProvider, domain.SlotFast, m.aiConfig.ActiveModel, msg.usage, "", msg.result.RawOutput)
+			}
+		}
 		delete(m.triagePending, msg.containerID)
 		return m, nil
 

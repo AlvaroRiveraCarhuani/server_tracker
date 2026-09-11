@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -201,8 +202,9 @@ func TestTUI_MouseLeftRowSelection(t *testing.T) {
 }
 
 type mockTriageService struct {
-	calls int
-	diag  string
+	calls              int
+	diag               string
+	diagnoseWithSlotFn func(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage)
 }
 
 func (m *mockTriageService) DiagnoseContainer(ctx context.Context, name, image, status, logs string) string {
@@ -213,6 +215,13 @@ func (m *mockTriageService) DiagnoseContainer(ctx context.Context, name, image, 
 func (m *mockTriageService) DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage) {
 	m.calls++
 	return m.diag, domain.TokenUsage{PromptTokens: 120, CompletionTokens: 25, TotalTokens: 145, EstimatedCostUSD: 0.0003}
+}
+
+func (m *mockTriageService) DiagnoseContainerWithSlot(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+	if m.diagnoseWithSlotFn != nil {
+		return m.diagnoseWithSlotFn(ctx, name, image, status, logs, slot)
+	}
+	return m.DiagnoseContainerWithUsage(ctx, name, image, status, logs)
 }
 
 func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
@@ -241,7 +250,7 @@ func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
 	}
 
 	mockAI := &mockTriageService{
-		diag: "Database connection timeout -> Verificar conectividad y credenciales de BD",
+		diag: `{"root_cause":"Database connection timeout -> Verificar conectividad y credenciales de BD","severity":"warning","suggested_action":"none","confidence":"high"}`,
 	}
 
 	model := NewModel(collector)
@@ -2225,5 +2234,294 @@ func TestTUI_Ola4_Criterio7_80ColumnasSinWrap(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// OLA 5: CONTRATO DE SALIDA ESTRUCTURADO Y VISIBILIDAD DE COSTO
+// ============================================================================
 
+// Criterio 1: Respuesta con prosa + JSON adentro -> banner [AI] con root_cause limpio; el saludo no aparece
+func TestTUI_Ola5_Criterio1_ProsaConJSONAdentro(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 30
 
+	c := domain.ContainerMetric{
+		ID:     "c-prose",
+		Name:   "worker-prose",
+		Status: "Exited (137)",
+	}
+	m.metrics = []domain.ContainerMetric{c}
+	m.cursor = 0
+
+	raw := "Estimado operador:\n{\"root_cause\":\"Fuga de memoria en worker\",\"severity\":\"critical\",\"suggested_action\":\"restart\",\"confidence\":\"high\"}\nSaludos cordiales!"
+	parser := service.NewAIResponseParser()
+	res := parser.Parse(raw, domain.TokenUsage{TotalTokens: 100}, c.Status)
+
+	m.diagnosisResults["c-prose"] = res
+	view := m.View()
+
+	if !strings.Contains(view, "[AI]") {
+		t.Errorf("expected [AI] tag in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Fuga de memoria en worker") {
+		t.Errorf("expected root cause 'Fuga de memoria en worker' in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "Estimado operador") || strings.Contains(view, "Saludos cordiales") {
+		t.Errorf("courtesy prose MUST NOT appear in rendered view, got:\n%s", view)
+	}
+}
+
+// Criterio 2: JSON sin campo confidence -> banner [AI] con "· conf baja" forzado y evidencia en V4
+func TestTUI_Ola5_Criterio2_JSONSinConfidence(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 30
+
+	c := domain.ContainerMetric{
+		ID:     "c-no-conf",
+		Name:   "app-no-conf",
+		Status: "Exited (1)",
+	}
+	m.metrics = []domain.ContainerMetric{c}
+	m.cursor = 0
+
+	raw := `{"root_cause":"Conexión rechazada por DB","severity":"warning","suggested_action":"none"}`
+	parser := service.NewAIResponseParser()
+	res := parser.Parse(raw, domain.TokenUsage{TotalTokens: 50}, c.Status)
+
+	if res.Confidence != "low" {
+		t.Fatalf("expected confidence to be forced to 'low', got %q", res.Confidence)
+	}
+
+	m.diagnosisResults["c-no-conf"] = res
+	view := m.View()
+
+	if !strings.Contains(view, "· conf baja") {
+		t.Errorf("expected banner to contain '· conf baja', got:\n%s", view)
+	}
+
+	// Verificar evidencia en V4
+	evidences := BuildEvidence(m, c, res, "")
+	foundConfEvidence := false
+	for _, ev := range evidences {
+		if ev.Type == "proceso" && strings.Contains(ev.Value, "confianza del modelo: baja") {
+			foundConfEvidence = true
+			break
+		}
+	}
+	if !foundConfEvidence {
+		t.Errorf("expected V4 evidence to include 'confianza del modelo: baja', got: %+v", evidences)
+	}
+}
+
+// Criterio 3: JSON con suggested_action "delete" -> acción efectiva none; V4 no muestra sugerencia; Cero RCE
+func TestTUI_Ola5_Criterio3_SuggestedActionDelete_ZeroRCE(t *testing.T) {
+	m := NewModel(nil)
+
+	c := domain.ContainerMetric{
+		ID:     "c-del",
+		Name:   "app-del",
+		Status: "Exited (1)",
+	}
+	raw := `{"root_cause":"Falla irreversible","severity":"critical","suggested_action":"delete","confidence":"high"}`
+	parser := service.NewAIResponseParser()
+	res := parser.Parse(raw, domain.TokenUsage{}, c.Status)
+
+	if res.SuggestedAction != "none" {
+		t.Fatalf("suggested_action 'delete' MUST fall back to 'none', got %q", res.SuggestedAction)
+	}
+	if res.Confidence != "low" {
+		t.Errorf("confidence MUST be forced to 'low' when action falls back to default, got %q", res.Confidence)
+	}
+
+	actions := m.GetV4Actions(c, res)
+	for _, act := range actions {
+		if act.ActionType == domain.ActionType("delete") || strings.Contains(act.Label, "delete") {
+			t.Fatalf("ZERO RCE VIOLATION: illegal action 'delete' present in V4 actions: %+v", act)
+		}
+	}
+}
+
+// Criterio 4: Respuesta sin JSON -> [AI~] idéntico al comportamiento de Ola 1
+func TestTUI_Ola5_Criterio4_RespuestaSinJSON(t *testing.T) {
+	parser := service.NewAIResponseParser()
+	raw := "No puedo determinar la causa raíz debido a falta de datos en los logs"
+	res := parser.Parse(raw, domain.TokenUsage{}, "Exited (1)")
+
+	if res.Level != domain.LevelAIPartial {
+		t.Errorf("expected LevelAIPartial [AI~], got %v", res.Level)
+	}
+	if res.SuggestedAction != "none" {
+		t.Errorf("expected action 'none', got %q", res.SuggestedAction)
+	}
+}
+
+// Criterio 5: Mock FAST devuelve severity critical + confidence high -> +2 req (FAST + DEEP), V4 nota re-análisis, segundo evento (cache) +0 req
+func TestTUI_Ola5_Criterio5_MockFastCriticalTriggersDeep(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	fastCalls := 0
+	deepCalls := 0
+
+	mockTriage := &mockTriageService{
+		diagnoseWithSlotFn: func(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+			if slot == domain.SlotDeep {
+				deepCalls++
+				return `{"root_cause":"OOM crítico confirmado en DEEP","severity":"critical","suggested_action":"restart","confidence":"high"}`, domain.TokenUsage{PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200}
+			}
+			fastCalls++
+			return `{"root_cause":"Posible OOM rápido","severity":"critical","suggested_action":"restart","confidence":"high"}`, domain.TokenUsage{PromptTokens: 300, CompletionTokens: 50, TotalTokens: 350}
+		},
+	}
+
+	m := NewModel(mockColl)
+	m.aiConfig.SelectionMode = domain.SelectionAuto
+	m.triageClient = mockTriage
+
+	c := domain.ContainerMetric{
+		ID:              "c-crit-re",
+		Name:            "crit-service",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-5 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c}
+	m.cursor = 0
+
+	// 1. Primer evento: ejecuta FAST y se re-ejecuta en DEEP
+	cmd1 := m.triggerTriageForced(c)
+	if cmd1 == nil {
+		t.Fatalf("expected cmd1 to not be nil")
+	}
+	msg1 := cmd1()
+	newM, _ := m.Update(msg1)
+	m = newM.(Model)
+
+	if fastCalls != 1 || deepCalls != 1 {
+		t.Fatalf("expected 1 FAST and 1 DEEP call, got fast=%d deep=%d", fastCalls, deepCalls)
+	}
+	if m.aiMeter.TotalRequests() != 2 {
+		t.Errorf("expected aiMeter to record 2 requests (FAST + DEEP), got %d", m.aiMeter.TotalRequests())
+	}
+
+	// Verificar nota de re-análisis en V4
+	res := m.diagnosisResults["c-crit-re"]
+	if !res.ReanalyzedDeep {
+		t.Errorf("expected ReanalyzedDeep to be true")
+	}
+	evidences := BuildEvidence(m, c, res, "")
+	foundDeepEvidence := false
+	for _, ev := range evidences {
+		if ev.Type == "proceso" && strings.Contains(ev.Value, "re-analizado en DEEP") {
+			foundDeepEvidence = true
+			break
+		}
+	}
+	if !foundDeepEvidence {
+		t.Errorf("expected V4 evidence to contain DEEP re-analysis note, got: %+v", evidences)
+	}
+
+	// 2. Segundo evento idéntico: debe servirse de caché sin nuevas llamadas
+	reqBefore := m.aiMeter.TotalRequests()
+	cmd2 := m.triggerTriageIfAnomalous(c)
+	if cmd2 != nil {
+		t.Errorf("expected cached triage to return nil command, got non-nil")
+	}
+	reqAfter := m.aiMeter.TotalRequests()
+	if reqAfter-reqBefore != 0 {
+		t.Errorf("expected +0 requests from cache hit, got +%d", reqAfter-reqBefore)
+	}
+}
+
+// Criterio 6: Sesión solo con modelos free -> status bar "sesión: N req · ~$0.00". Modelo fuera de tabla -> V3 muestra tokens sin "~$"
+func TestTUI_Ola5_Criterio6_SesionFreeYModeloSinPrecio(t *testing.T) {
+	meter := service.NewAIMeter()
+
+	// 1. Modelo free
+	meter.Record(domain.ProviderOpenRouter, domain.SlotFast, "openrouter/free", domain.TokenUsage{TotalTokens: 500}, "", "")
+	sb := meter.FormatStatusBar()
+	if !strings.Contains(sb, "sesión: 1 req · ~$0.00") {
+		t.Errorf("expected 'sesión: 1 req · ~$0.00' for free model, got %q", sb)
+	}
+
+	// 2. Modelo fuera de tabla (desconocido)
+	meter.Record(domain.ProviderCustom, domain.SlotFast, "unregistered-llm-model", domain.TokenUsage{TotalTokens: 300}, "", "")
+	provStats := meter.FormatProviderStats(domain.ProviderCustom)
+	if strings.Contains(provStats, "$") {
+		t.Errorf("model outside table MUST NOT display '$', got %q", provStats)
+	}
+	if !strings.Contains(provStats, "sesión: 1 req · 300 tok") {
+		t.Errorf("expected 'sesión: 1 req · 300 tok', got %q", provStats)
+	}
+}
+
+// Criterio 7: 80 columnas: banner con recurrencia + conf baja + root cause largo trunca limpio, cayendo primero segmentos opcionales
+func TestTUI_Ola5_Criterio7_80ColsOrdenDeterministaTruncado(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 80
+	m.height = 24
+
+	longRootCause := "Falla crítica por saturación extrema del heap de memoria de la máquina virtual java"
+	c := domain.ContainerMetric{
+		ID:     "c-80cols",
+		Name:   "app-80",
+		Status: "Exited (137)",
+	}
+	m.metrics = []domain.ContainerMetric{c}
+	m.cursor = 0
+
+	res := domain.DiagnosisResult{
+		Level:           domain.LevelAI,
+		RootCause:       fmt.Sprintf("%s recurrente (3/1h)", longRootCause),
+		Severity:        "critical",
+		SuggestedAction: "restart",
+		Confidence:      "low",
+		RecurrenceCount: 3,
+		RecurrenceNote:  "reiniciar no resolverá la causa raíz",
+	}
+	m.diagnosisResults["c-80cols"] = res
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	foundBanner := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[AI]") && strings.Contains(trimmed, "Falla crítica") {
+			foundBanner = true
+			w := lipgloss.Width(line)
+			if w > 80 {
+				t.Errorf("banner line %d exceeds 80 columns (width=%d):\n%s", i, w, line)
+			}
+			// El orden determinista hace caer '· conf baja' primero
+			if strings.Contains(line, "· conf baja") {
+				t.Errorf("expected '· conf baja' to be dropped first to fit 80 cols, got:\n%s", line)
+			}
+			if !strings.Contains(line, "[d] detalle") {
+				t.Errorf("expected '[d] detalle' to be preserved in banner, got:\n%s", line)
+			}
+		}
+	}
+	if !foundBanner {
+		t.Errorf("did not find banner line in view:\n%s", view)
+	}
+}
+
+// Criterio 8: Reiniciar el agente resetea contadores a "sesión: 0 req · ~$0.00"
+func TestTUI_Ola5_Criterio8_ResetContadoresSesion(t *testing.T) {
+	m1 := NewModel(nil)
+	m1.aiMeter.Record(domain.ProviderAnthropic, domain.SlotFast, "claude-3-5-sonnet-20241022", domain.TokenUsage{TotalTokens: 5000}, "", "")
+
+	if m1.aiMeter.TotalRequests() != 1 {
+		t.Fatalf("expected 1 request in m1, got %d", m1.aiMeter.TotalRequests())
+	}
+
+	// Reiniciar modelo
+	m2 := NewModel(nil)
+	if m2.aiMeter.TotalRequests() != 0 {
+		t.Errorf("expected 0 requests on fresh model restart, got %d", m2.aiMeter.TotalRequests())
+	}
+	if m2.aiMeter.TotalCost() != 0.0 {
+		t.Errorf("expected 0.0 cost on fresh model restart, got %f", m2.aiMeter.TotalCost())
+	}
+	sb := m2.aiMeter.FormatStatusBar()
+	if !strings.Contains(sb, "sesión: 0 req · ~$0.00") {
+		t.Errorf("expected 'sesión: 0 req · ~$0.00' on fresh model restart, got %q", sb)
+	}
+}

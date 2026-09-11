@@ -2,10 +2,10 @@ package usecases
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
@@ -22,6 +22,9 @@ type DiagnoseContainerUseCase struct {
 	triagePort   ports.TriagePort
 	ruleEngine   *service.RuleEngine
 	crashJournal *service.CrashJournal
+	parser       *service.AIResponseParser
+	mu           sync.Mutex
+	reExecuted   map[string]bool
 }
 
 // NewDiagnoseContainerUseCase crea una nueva instancia del caso de uso.
@@ -33,15 +36,24 @@ func NewDiagnoseContainerUseCase(collector ports.CollectorPort, triage ports.Tri
 		re = service.NewRuleEngine()
 	}
 	return &DiagnoseContainerUseCase{
-		collector:  collector,
-		triagePort: triage,
-		ruleEngine: re,
+		collector:    collector,
+		triagePort:   triage,
+		ruleEngine:   re,
+		parser:       service.NewAIResponseParser(),
+		reExecuted:   make(map[string]bool),
 	}
 }
 
 // SetCrashJournal vincula el journal de fallas para contexto temporal y detección de recurrencia.
 func (uc *DiagnoseContainerUseCase) SetCrashJournal(journal *service.CrashJournal) {
 	uc.crashJournal = journal
+}
+
+// SetReExecutedMap permite inyectar el mapa de eventos re-ejecutados para dedupe en sesión.
+func (uc *DiagnoseContainerUseCase) SetReExecutedMap(reExecuted map[string]bool) {
+	if reExecuted != nil {
+		uc.reExecuted = reExecuted
+	}
 }
 
 // Execute recopila logs recientes si están disponibles y solicita un diagnóstico contextual de causa raíz con IA.
@@ -103,7 +115,7 @@ func (uc *DiagnoseContainerUseCase) executeCascadeRaw(
 
 	// 3. Evaluar con IA si el puerto está configurado
 	if uc.triagePort != nil {
-		rawDiag, usage := uc.triagePort.DiagnoseContainerWithUsage(ctx, c.Name, c.Image, c.Status, logs)
+		rawDiag, usage := uc.triagePort.DiagnoseContainerWithSlot(ctx, c.Name, c.Image, c.Status, logs, domain.SlotFast)
 		rawDiag = strings.TrimSpace(rawDiag)
 
 		// Comprobar si hubo fallo operativo en IA (sin key, timeout, error HTTP o no configurado)
@@ -115,8 +127,37 @@ func (uc *DiagnoseContainerUseCase) executeCascadeRaw(
 			return signalResult(exitCode, c.Status)
 		}
 
-		// IA respondió con éxito. Validar si es estructurada o texto crudo/parcial
-		res := parseAIResponse(rawDiag, usage)
+		// IA respondió con éxito. Parsear con AIResponseParser (S1)
+		res := uc.parser.Parse(rawDiag, usage, c.Status)
+
+		// S2: Re-ejecución acotada FAST -> DEEP si severity == critical && confidence != low
+		if res.Level == domain.LevelAI && res.Severity == "critical" && res.Confidence != "low" {
+			eventKey := fmt.Sprintf("%s:%d:%d", c.ID, c.LastStateChange.UnixNano(), exitCode)
+			if c.LastStateChange.IsZero() {
+				eventKey = fmt.Sprintf("%s:%s:%d", c.ID, c.Status, exitCode)
+			}
+
+			uc.mu.Lock()
+			already := uc.reExecuted[eventKey]
+			if !already {
+				uc.reExecuted[eventKey] = true
+			}
+			uc.mu.Unlock()
+
+			if !already {
+				deepDiag, deepUsage := uc.triagePort.DiagnoseContainerWithSlot(ctx, c.Name, c.Image, c.Status, logs, domain.SlotDeep)
+				deepDiag = strings.TrimSpace(deepDiag)
+				if !isAIFailure(deepDiag) {
+					deepRes := uc.parser.Parse(deepDiag, deepUsage, c.Status)
+					if deepRes.Level == domain.LevelAI {
+						res = deepRes
+						res.ReanalyzedDeep = true
+						res.ProcessNote = "re-analizado en DEEP por severidad crítica"
+					}
+				}
+			}
+		}
+
 		return res
 	}
 
@@ -180,81 +221,6 @@ func isAIFailure(resp string) bool {
 		strings.Contains(rLower, "429 too many requests")
 }
 
-// parseAIResponse clasifica la respuesta entre Nivel 0 [AI] y Nivel 1 [AI~].
-func parseAIResponse(raw string, usage domain.TokenUsage) domain.DiagnosisResult {
-	// Reemplazar saltos de línea por espacios para garantizar economía de 1 línea
-	singleLine := strings.ReplaceAll(raw, "\r\n", " ")
-	singleLine = strings.ReplaceAll(singleLine, "\n", " ")
-	singleLine = strings.TrimSpace(singleLine)
-
-	// Intentar parsear si viene como JSON
-	var jsonTarget struct {
-		RootCause       string `json:"root_cause"`
-		Severity        string `json:"severity"`
-		SuggestedAction string `json:"suggested_action"`
-	}
-
-	// Si contiene JSON válido
-	if strings.HasPrefix(singleLine, "{") && strings.HasSuffix(singleLine, "}") {
-		if err := json.Unmarshal([]byte(singleLine), &jsonTarget); err == nil && jsonTarget.RootCause != "" {
-			action := jsonTarget.SuggestedAction
-			if action == "" {
-				action = "none"
-			}
-			sev := jsonTarget.Severity
-			if sev == "" {
-				sev = "warning"
-			}
-			return domain.DiagnosisResult{
-				Level:           domain.LevelAI,
-				RootCause:       jsonTarget.RootCause,
-				Severity:        sev,
-				SuggestedAction: action,
-				RawOutput:       singleLine,
-				TokenUsage:      usage,
-			}
-		}
-	}
-
-	// Formato estándar SOLV: [Causa probable -> Acción recomendada] o similar estructurado
-	if strings.Contains(singleLine, "->") || strings.Contains(singleLine, "•") {
-		// Respuestas bien estructuradas
-		action := "none"
-		sLower := strings.ToLower(singleLine)
-		if strings.Contains(sLower, "reiniciar") || strings.Contains(sLower, "restart") {
-			action = "restart"
-		} else if strings.Contains(sLower, "detener") || strings.Contains(sLower, "stop") {
-			action = "stop"
-		} else if strings.Contains(sLower, "aislar") || strings.Contains(sLower, "isolate") {
-			action = "isolate"
-		}
-
-		cleanCause := strings.Trim(singleLine, "[]")
-		return domain.DiagnosisResult{
-			Level:           domain.LevelAI,
-			RootCause:       cleanCause,
-			Severity:        "warning",
-			SuggestedAction: action,
-			RawOutput:       singleLine,
-			TokenUsage:      usage,
-		}
-	}
-
-	// Si no tiene estructura reconocible o falló el formato esperado -> Nivel 1 [AI~] (truncado)
-	truncated := singleLine
-	if len(truncated) > 75 {
-		truncated = truncated[:72] + "..."
-	}
-
-	return domain.DiagnosisResult{
-		Level:           domain.LevelAIPartial,
-		RootCause:       truncated,
-		Severity:        "warning",
-		SuggestedAction: "none",
-		RawOutput:       singleLine,
-		TokenUsage:      usage,
-	}
-}
 
 // signalResult construye el diagnóstico Nivel 3 [SIG].
 func signalResult(exitCode int, status string) domain.DiagnosisResult {
