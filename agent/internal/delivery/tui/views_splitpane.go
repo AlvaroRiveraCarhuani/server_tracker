@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -34,6 +33,10 @@ func (m Model) View() string {
 
 	if m.activeState == stateThemeModal {
 		return overlayModal(baseView, m.viewThemeModal(), m.width, m.height)
+	}
+
+	if m.activeState == stateDiagnosisModal {
+		return overlayModal(baseView, m.viewDiagnosisModal(), m.width, m.height)
 	}
 
 	return baseView
@@ -306,73 +309,101 @@ func (m Model) viewTable() string {
 			subInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  Imagen: %s  |  ID: %s  |  Categoría: %s", sel.Image, sel.ID, tech.Category))
 			rightContent.WriteString(subInfo + "\n\n")
 
-			// Tarjeta Térmica de Recursos
-			rightContent.WriteString(StyleCardTitle.Render("METRICAS EN TIEMPO REAL:") + "\n")
+			// 1. CICLO DE VIDA
+			rightContent.WriteString(StyleCardTitle.Render("CICLO DE VIDA") + "\n")
+			stateDesc := sel.Status
+			if !sel.LastStateChange.IsZero() {
+				stateDesc = fmt.Sprintf("%s · %s", sel.Status, formatDurationAgo(time.Since(sel.LastStateChange)))
+			}
+			rightContent.WriteString(fmt.Sprintf("  state: %s\n", stateDesc))
 
-			// CPU
-			hist := m.metricsHistory[sel.ID]
-			cpuSpark := ""
-			cpuMinStr := "0.0%"
-			cpuMaxStr := "0.0%"
-			trendStyled := "≈ estable"
-			if hist != nil && len(hist.CPU) > 0 {
-				cpuSpark = RenderSparkline(hist.CPU, 0, 100, 16)
-				trend := hist.CalculateCPUTrend()
-				trendStyled = trend.Style.Render(fmt.Sprintf("%s %s", trend.Symbol, trend.Label))
-				minC, maxC := hist.CPUMinMax()
-				cpuMinStr = fmt.Sprintf("%.1f%%", minC)
-				cpuMaxStr = fmt.Sprintf("%.1f%%", maxC)
+			policyStr := sel.RestartPolicy
+			if policyStr == "" {
+				policyStr = "--"
 			}
-			cpuBar := RenderGradientBar(sel.CPUPercent, 100.0, 10)
-			sparkBlock := ""
-			if cpuSpark != "" {
-				sparkBlock = fmt.Sprintf(" [%s]", cpuSpark)
+			rightContent.WriteString(fmt.Sprintf("  restarts: %d en ciclo · policy: %s\n\n", sel.RestartCount, policyStr))
+
+			// 2. VITALES
+			rightContent.WriteString(StyleCardTitle.Render("VITALES") + "\n")
+			cpuThrottlingStr := fmt.Sprintf("throttling %.0f%%", sel.CPUPercentThrottled)
+			cpuGlyph := "[OK]"
+			if sel.CPUPercent > 80.0 {
+				cpuGlyph = "[!!]"
+			} else if sel.CPUPercentThrottled > 0.0 {
+				cpuGlyph = "[||]"
 			}
-			rightContent.WriteString(fmt.Sprintf("  CPU: %5.1f%% %s%s %s\n", sel.CPUPercent, cpuBar, sparkBlock, trendStyled))
-			if panelHeight >= 12 {
-				rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("       (Mín: %s | Máx: %s)", cpuMinStr, cpuMaxStr)) + "\n")
-			}
+			rightContent.WriteString(fmt.Sprintf("  CPU: %5.1f%% · %-18s %s\n", sel.CPUPercent, cpuThrottlingStr, cpuGlyph))
 
 			// RAM
 			ramMB := float64(sel.RAMBytes) / (1024 * 1024)
 			if sel.RAMLimitBytes > 0 {
 				limitMB := float64(sel.RAMLimitBytes) / (1024 * 1024)
-				ramBar := RenderGradientBar(ramMB, limitMB, 12)
 				pct := (ramMB / limitMB) * 100.0
-				rightContent.WriteString(fmt.Sprintf("  RAM: %6.1f MB / %6.1f MB %s %5.1f%%\n", ramMB, limitMB, ramBar, pct))
+				ramTag := "[OK]"
+				if pct >= 85.0 {
+					ramTag = "[!!] riesgo OOM"
+				}
+				rightContent.WriteString(fmt.Sprintf("  RAM: %.0f/%.0fMB (%.0f%%)               %s\n", ramMB, limitMB, pct, ramTag))
 			} else {
-				peakMB := ramMB
-				if hist != nil {
-					peakMB = math.Max(ramMB, hist.PeakRAM())
-				}
-				ramBar := RenderGradientBar(ramMB, peakMB, 12)
-				rightContent.WriteString(fmt.Sprintf("  RAM: %6.1f MB %s (Sin límite Docker)\n", ramMB, ramBar))
+				rightContent.WriteString(fmt.Sprintf("  RAM: %.1f MB (Sin límite Docker)    [OK]\n", ramMB))
 			}
 
-			// Egress / Red
+			// RED
 			egressStr, egressStyle := FormatEgress(sel.EgressBytesSec)
-			rightContent.WriteString(fmt.Sprintf("  RED: Salida: %s\n\n", egressStyle.Render(egressStr)))
+			rightContent.WriteString(fmt.Sprintf("  RED: egress %-16s       [OK]\n", egressStyle.Render(egressStr)))
 
-			// Sección de Acciones Rápidas
-			rightContent.WriteString(StyleCardTitle.Render("ACCIONES DISPONIBLES:") + "\n")
-
-			// Hint visual de acción sugerida (D1 CERO RCE: estrictamente visual, jamás auto-ejecutada)
-			rLabel := "[r] Restart"
-			sLabel := "[s] Stop"
-			xLabel := "[x] Aislar Red"
-
-			if res, ok := m.diagnosisResults[sel.ID]; ok {
-				switch res.SuggestedAction {
-				case "restart":
-					rLabel = "[r] Restart (sugerido)"
-				case "stop":
-					sLabel = "[s] Stop (sugerido)"
-				case "isolate":
-					xLabel = "[x] Aislar Red (sugerido)"
-				}
+			// Trend
+			hist := m.metricsHistory[sel.ID]
+			if hist != nil && len(hist.CPU) > 0 {
+				trend := hist.CalculateCPUTrend()
+				spark := RenderSparkline(hist.CPU, 0, 100, 8)
+				rightContent.WriteString(fmt.Sprintf("  trend: %s  %s\n\n", spark, trend.Style.Render(trend.Label)))
+			} else {
+				rightContent.WriteString("  trend: --  estable\n\n")
 			}
 
-			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [l/Enter] Logs en vivo    •  [e] Shell interactiva\n  [p] Fijar / Desanclar     •  [P] Limpiar fijados\n  %s  •  %s  •  %s\n", rLabel, sLabel, xLabel)))
+			// 3. DIAGNÓSTICO
+			rightContent.WriteString(StyleCardTitle.Render("DIAGNÓSTICO") + "\n")
+			if res, ok := m.diagnosisResults[sel.ID]; ok {
+				var tagStr string
+				switch res.Level {
+				case domain.LevelAI:
+					tagStr = StyleTagAI.Render("[AI]")
+				case domain.LevelAIPartial:
+					tagStr = StyleTagAIPartial.Render("[AI~]")
+				case domain.LevelRule:
+					tagStr = StyleTagRule.Render("[RULE]")
+				default:
+					tagStr = StyleTagSignal.Render("[SIG]")
+				}
+				cause := res.RootCause
+				if len(cause) > 35 {
+					cause = cause[:32] + "..."
+				}
+				detailHint := lipgloss.NewStyle().Foreground(ColorLavender).Render("[d] detalle")
+				rightContent.WriteString(fmt.Sprintf("  %s %s · %s\n\n", tagStr, cause, detailHint))
+			} else {
+				solicitarHint := lipgloss.NewStyle().Foreground(ColorLavender).Render("[d] solicitar")
+				rightContent.WriteString(fmt.Sprintf("  [--] sin diagnóstico · %s\n\n", solicitarHint))
+			}
+
+			// 4. CONTEXTO
+			rightContent.WriteString(StyleCardTitle.Render("CONTEXTO") + "\n")
+			netStr := "--"
+			if len(sel.Networks) > 0 {
+				netStr = strings.Join(sel.Networks, ", ")
+			}
+			if sel.ComposeProject != "" {
+				rightContent.WriteString(fmt.Sprintf("  compose: %s · net: %s\n", sel.ComposeProject, netStr))
+			} else {
+				rightContent.WriteString(fmt.Sprintf("  net: %s\n", netStr))
+			}
+
+			portsStr := "--"
+			if len(sel.Ports) > 0 {
+				portsStr = strings.Join(sel.Ports, ", ")
+			}
+			rightContent.WriteString(fmt.Sprintf("  ports: %s · vols: %d\n", portsStr, sel.VolumeCount))
 		} else {
 			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Selecciona un contenedor de la lista izquierda."))
 		}

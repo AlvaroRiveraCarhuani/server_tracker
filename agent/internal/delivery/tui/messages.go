@@ -18,6 +18,7 @@ const (
 	stateConfigModal
 	stateHelp
 	stateThemeModal
+	stateDiagnosisModal
 )
 
 type tickMsg time.Time

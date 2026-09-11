@@ -163,6 +163,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case stateDiagnosisModal:
+			actions := m.GetV4Actions(m.pendingContainer, m.diagnosisResults[m.selectedID])
+			switch msg.String() {
+			case "esc", "q":
+				m.activeState = stateFleetTable
+				return m, nil
+			case "up", "k":
+				if m.v4ActionCursor > 0 {
+					m.v4ActionCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if len(actions) > 0 && m.v4ActionCursor < len(actions)-1 {
+					m.v4ActionCursor++
+				}
+				return m, nil
+			case "enter":
+				if len(actions) > 0 && m.v4ActionCursor < len(actions) {
+					act := actions[m.v4ActionCursor]
+					if act.IsLogs {
+						m.activeState = stateLogViewer
+						m.viewport.SetContent("Cargando logs de Docker...")
+						return m, m.fetchLogs(m.pendingContainer.ID, m.pendingContainer.Name)
+					}
+					if act.IsAI {
+						m.statusMessage = "[OK] Solicitando diagnóstico con IA..."
+						m.statusExpiry = time.Now().Add(4 * time.Second)
+						return m, m.triggerTriageForced(m.pendingContainer)
+					}
+					// D1 CERO RCE: Remediación siempre pasa por el modal de confirmación
+					m.pendingAction = act.ActionType
+					m.confirmModalBtn = 0
+					m.activeState = stateConfirmRemediation
+					return m, nil
+				}
+				return m, nil
+			case "r":
+				m.pendingAction = domain.ActionRestart
+				m.confirmModalBtn = 0
+				m.activeState = stateConfirmRemediation
+				return m, nil
+			case "s":
+				m.pendingAction = domain.ActionStop
+				m.confirmModalBtn = 0
+				m.activeState = stateConfirmRemediation
+				return m, nil
+			case "x":
+				m.pendingAction = domain.ActionIsolateNetwork
+				m.confirmModalBtn = 0
+				m.activeState = stateConfirmRemediation
+				return m, nil
+			case "l":
+				m.activeState = stateLogViewer
+				m.viewport.SetContent("Cargando logs de Docker...")
+				return m, m.fetchLogs(m.pendingContainer.ID, m.pendingContainer.Name)
+			case "i", "I":
+				m.statusMessage = "[OK] Solicitando diagnóstico con IA..."
+				m.statusExpiry = time.Now().Add(4 * time.Second)
+				return m, m.triggerTriageForced(m.pendingContainer)
+			}
+
 		case stateConfirmRemediation:
 			switch msg.String() {
 			case "left", "right", "tab", "shift+tab", "h", "l":
@@ -591,6 +652,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.aiState = aiViewPolicy
 				m.aiPolicyCursor = 0
 				return m, nil
+
+			case "d", "D":
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					c := filtered[m.cursor]
+					m.selectedID = c.ID
+					m.selectedName = c.Name
+					m.selectedState = c.Status
+					m.pendingContainer = c
+					m.v4ActionCursor = 0
+					m.activeState = stateDiagnosisModal
+					if cmd := m.triggerTriageIfAnomalous(c); cmd != nil {
+						return m, cmd
+					}
+					return m, nil
+				}
 
 			case "t":
 				m.activeState = stateThemeModal

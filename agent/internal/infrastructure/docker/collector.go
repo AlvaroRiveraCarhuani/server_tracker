@@ -33,6 +33,15 @@ func CalculateCPUPercent(stats *dockertypes.StatsResponse) float64 {
 	return (cpuDelta / systemDelta) * onlineCPUs * 100.0
 }
 
+// CalculateCPUThrottlingPercent computa el porcentaje de periodos de CPU que sufrieron throttling por cuota.
+func CalculateCPUThrottlingPercent(stats *dockertypes.StatsResponse) float64 {
+	td := stats.CPUStats.ThrottlingData
+	if td.Periods > 0 {
+		return (float64(td.ThrottledPeriods) / float64(td.Periods)) * 100.0
+	}
+	return 0.0
+}
+
 // CalculateRealRAM descuenta la memoria caché inactiva (inactive_file) para reflejar consumo real.
 func CalculateRealRAM(stats *dockertypes.StatsResponse) (realRAM uint64, limit uint64) {
 	usage := stats.MemoryStats.Usage
@@ -104,13 +113,71 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 			statusStr = c.State
 		}
 
+		// Extraer metadatos de red, puertos, labels y volúmenes
+		var networksList []string
+		if c.NetworkSettings != nil {
+			for netName := range c.NetworkSettings.Networks {
+				networksList = append(networksList, netName)
+			}
+		}
+
+		var portsList []string
+		for _, p := range c.Ports {
+			if p.PublicPort > 0 {
+				portsList = append(portsList, fmt.Sprintf("%d->%d", p.PublicPort, p.PrivatePort))
+			} else if p.PrivatePort > 0 {
+				portsList = append(portsList, fmt.Sprintf("%d/%s", p.PrivatePort, p.Type))
+			}
+		}
+
+		composeProj := ""
+		if c.Labels != nil {
+			composeProj = c.Labels["com.docker.compose.project"]
+		}
+		volumeCount := len(c.Mounts)
+
+		// Metadatos de ciclo de vida e inspección
+		var restartCount int
+		var restartPolicy string
+		var lastChange time.Time
+		var envVars []string
+
+		if inspect, err := d.cli.ContainerInspect(ctx, c.ID); err == nil {
+			restartCount = inspect.RestartCount
+			if inspect.HostConfig != nil {
+				restartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
+			}
+			if inspect.State != nil {
+				tStr := inspect.State.StartedAt
+				if c.State != "running" && inspect.State.FinishedAt != "" {
+					tStr = inspect.State.FinishedAt
+				}
+				if parsedTime, err := time.Parse(time.RFC3339Nano, tStr); err == nil {
+					lastChange = parsedTime
+				} else if parsedTime, err := time.Parse(time.RFC3339, tStr); err == nil {
+					lastChange = parsedTime
+				}
+			}
+			if inspect.Config != nil {
+				envVars = inspect.Config.Env
+			}
+		}
+
 		if c.State != "running" {
 			metrics = append(metrics, domain.ContainerMetric{
-				ID:        c.ID[:12],
-				Name:      strings.TrimPrefix(c.Names[0], "/"),
-				Image:     c.Image,
-				Status:    statusStr,
-				Timestamp: now,
+				ID:              c.ID[:12],
+				Name:            strings.TrimPrefix(c.Names[0], "/"),
+				Image:           c.Image,
+				Status:          statusStr,
+				RestartCount:    restartCount,
+				RestartPolicy:   restartPolicy,
+				LastStateChange: lastChange,
+				Networks:        networksList,
+				Ports:           portsList,
+				EnvVars:         envVars,
+				ComposeProject:  composeProj,
+				VolumeCount:     volumeCount,
+				Timestamp:       now,
 			})
 			continue
 		}
@@ -128,6 +195,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 		statsBody.Body.Close()
 
 		cpuPct := CalculateCPUPercent(&stats)
+		throttledPct := CalculateCPUThrottlingPercent(&stats)
 		realRAM, limitRAM := CalculateRealRAM(&stats)
 		rxTot, txTot := CalculateNetworkTotals(&stats)
 
@@ -151,17 +219,26 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 		}
 
 		metrics = append(metrics, domain.ContainerMetric{
-			ID:              c.ID[:12],
-			Name:            strings.TrimPrefix(c.Names[0], "/"),
-			Image:           c.Image,
-			Status:          c.State,
-			CPUPercent:      cpuPct,
-			RAMBytes:        realRAM,
-			RAMLimitBytes:   limitRAM,
-			EgressBytesSec:  egressSec,
-			IngressBytesSec: ingressSec,
-			PIDs:            stats.PidsStats.Current,
-			Timestamp:       now,
+			ID:                  c.ID[:12],
+			Name:                strings.TrimPrefix(c.Names[0], "/"),
+			Image:               c.Image,
+			Status:              statusStr,
+			CPUPercent:          cpuPct,
+			CPUPercentThrottled: throttledPct,
+			RAMBytes:            realRAM,
+			RAMLimitBytes:       limitRAM,
+			EgressBytesSec:      egressSec,
+			IngressBytesSec:     ingressSec,
+			PIDs:                stats.PidsStats.Current,
+			RestartCount:        restartCount,
+			RestartPolicy:       restartPolicy,
+			LastStateChange:     lastChange,
+			Networks:            networksList,
+			Ports:               portsList,
+			EnvVars:             envVars,
+			ComposeProject:      composeProj,
+			VolumeCount:         volumeCount,
+			Timestamp:           now,
 		})
 	}
 

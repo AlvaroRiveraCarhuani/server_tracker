@@ -73,6 +73,7 @@ type Model struct {
 	pendingAction    domain.ActionType
 	pendingContainer domain.ContainerMetric
 	confirmModalBtn  int // 0 = Confirmar, 1 = Cancelar
+	v4ActionCursor   int // Índice de acción seleccionada en modal V4 diagnóstico
 	statusMessage    string
 	statusExpiry     time.Time
 	lastError        string

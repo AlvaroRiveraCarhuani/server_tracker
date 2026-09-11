@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
@@ -229,26 +228,8 @@ func signalResult(exitCode int, status string) domain.DiagnosisResult {
 	}
 }
 
-// parseExitCode extrae el código de salida numérico de strings tipo "Exited (137) 2 minutes ago" o "Restarting (1) 10 seconds ago".
+// parseExitCode delega en domain.ParseExitCode para extracción canónica.
 func parseExitCode(status string) int {
-	statusLower := strings.ToLower(status)
-	idx := strings.Index(statusLower, "exited (")
-	if idx == -1 {
-		idx = strings.Index(statusLower, "restarting (")
-	}
-	if idx != -1 {
-		openParen := strings.Index(statusLower[idx:], "(")
-		if openParen != -1 {
-			rest := statusLower[idx+openParen+1:]
-			endIdx := strings.Index(rest, ")")
-			if endIdx != -1 {
-				codeStr := rest[:endIdx]
-				if val, err := strconv.Atoi(codeStr); err == nil {
-					return val
-				}
-			}
-		}
-	}
-	return -1
+	return domain.ParseExitCode(status)
 }
 

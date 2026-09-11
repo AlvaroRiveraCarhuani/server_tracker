@@ -8,13 +8,22 @@ type ContainerMetric struct {
 	Name           string    `json:"name"`
 	Image          string    `json:"image"`
 	Status         string    `json:"status"`
-	CPUPercent     float64   `json:"cpu_percent"`
-	RAMBytes       uint64    `json:"ram_bytes"`
-	RAMLimitBytes  uint64    `json:"ram_limit_bytes"`
-	EgressBytesSec float64   `json:"egress_bytes_sec"`
-	IngressBytesSec float64  `json:"ingress_bytes_sec"`
-	PIDs           uint64    `json:"pids"`
-	Timestamp      time.Time `json:"timestamp"`
+	CPUPercent          float64   `json:"cpu_percent"`
+	CPUPercentThrottled float64   `json:"cpu_percent_throttled"`
+	RAMBytes            uint64    `json:"ram_bytes"`
+	RAMLimitBytes       uint64    `json:"ram_limit_bytes"`
+	EgressBytesSec      float64   `json:"egress_bytes_sec"`
+	IngressBytesSec     float64   `json:"ingress_bytes_sec"`
+	PIDs                uint64    `json:"pids"`
+	RestartCount        int       `json:"restart_count"`
+	RestartPolicy       string    `json:"restart_policy,omitempty"`
+	LastStateChange     time.Time `json:"last_state_change,omitempty"`
+	Networks            []string  `json:"networks,omitempty"`
+	Ports               []string  `json:"ports,omitempty"`
+	EnvVars             []string  `json:"env_vars,omitempty"`
+	ComposeProject      string    `json:"compose_project,omitempty"`
+	VolumeCount         int       `json:"volume_count,omitempty"`
+	Timestamp           time.Time `json:"timestamp"`
 }
 
 // HostTelemetry agrupa las métricas de todos los contenedores de un host.

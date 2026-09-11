@@ -1,0 +1,253 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// EvidenceItem representa un elemento tipado de evidencia en el diagnóstico V4.
+type EvidenceItem struct {
+	Type  string // "evento", "métrica", "log", "historial"
+	Label string // ej: "exit 137", "RAM", "CPU", "tendencia", "log"
+	Value string // ej: "hace 2m", "508/512MB (99%)", "creciente ▁▃▅█", "Killed..."
+}
+
+// V4Action representa una acción ejecutable desde el overlay de diagnóstico V4.
+type V4Action struct {
+	Key        string
+	ActionType domain.ActionType
+	IsLogs     bool
+	IsAI       bool
+	Label      string
+}
+
+// BuildEvidence construye la lista tipada de evidencias a partir del contenedor y su diagnóstico.
+func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult, logs string) []EvidenceItem {
+	var items []EvidenceItem
+
+	// 1. Evidencia de Evento: Código de salida y ciclo de vida
+	exitCode := domain.ParseExitCode(c.Status)
+	if exitCode >= 0 {
+		val := "reciente"
+		if !c.LastStateChange.IsZero() {
+			val = formatDurationAgo(time.Since(c.LastStateChange))
+		}
+		items = append(items, EvidenceItem{
+			Type:  "evento",
+			Label: fmt.Sprintf("exit %d", exitCode),
+			Value: val,
+		})
+	}
+
+	if c.RestartCount > 0 {
+		items = append(items, EvidenceItem{
+			Type:  "evento",
+			Label: "restarts",
+			Value: fmt.Sprintf("%d en ciclo actual", c.RestartCount),
+		})
+	}
+
+	// 2. Evidencia de Métrica: RAM con límites y porcentaje
+	ramMB := float64(c.RAMBytes) / (1024 * 1024)
+	if c.RAMLimitBytes > 0 {
+		limitMB := float64(c.RAMLimitBytes) / (1024 * 1024)
+		pct := (ramMB / limitMB) * 100.0
+		items = append(items, EvidenceItem{
+			Type:  "métrica",
+			Label: "RAM",
+			Value: fmt.Sprintf("%.0fMB / límite %.0fMB (%.0f%%)", ramMB, limitMB, pct),
+		})
+	} else if ramMB > 0 {
+		items = append(items, EvidenceItem{
+			Type:  "métrica",
+			Label: "RAM",
+			Value: fmt.Sprintf("%.1fMB (sin límite Docker)", ramMB),
+		})
+	}
+
+	// 3. Evidencia de Métrica: CPU y Throttling
+	cpuVal := fmt.Sprintf("%.1f%% · throttling %.0f%%", c.CPUPercent, c.CPUPercentThrottled)
+	items = append(items, EvidenceItem{
+		Type:  "métrica",
+		Label: "CPU",
+		Value: cpuVal,
+	})
+
+	// 4. Evidencia de Métrica: Tendencia y Sparkline
+	if hist, ok := m.metricsHistory[c.ID]; ok && len(hist.CPU) > 0 {
+		trend := hist.CalculateCPUTrend()
+		spark := RenderSparkline(hist.CPU, 0, 100, 8)
+		items = append(items, EvidenceItem{
+			Type:  "métrica",
+			Label: "tendencia",
+			Value: fmt.Sprintf("%s  %s", trend.Label, spark),
+		})
+	}
+
+	// 5. Evidencia de Log: Fragmento significativo
+	logSnippet := strings.TrimSpace(logs)
+	if logSnippet == "" && res.RawOutput != "" {
+		logSnippet = strings.TrimSpace(res.RawOutput)
+	}
+	if logSnippet != "" {
+		lines := strings.Split(logSnippet, "\n")
+		lastLine := lines[len(lines)-1]
+		if len(lastLine) > 55 {
+			lastLine = lastLine[len(lastLine)-52:] + "..."
+		}
+		items = append(items, EvidenceItem{
+			Type:  "log",
+			Label: "log",
+			Value: fmt.Sprintf("\"%s\"", lastLine),
+		})
+	}
+
+	return items
+}
+
+// GetV4Actions obtiene la lista de acciones disponibles para el contenedor en V4.
+func (m Model) GetV4Actions(c domain.ContainerMetric, res domain.DiagnosisResult) []V4Action {
+	var actions []V4Action
+
+	// Acción sugerida según regla o IA
+	switch res.SuggestedAction {
+	case "restart":
+		actions = append(actions, V4Action{
+			Key:        "r",
+			ActionType: domain.ActionRestart,
+			Label:      "aplicar restart",
+		})
+	case "stop":
+		actions = append(actions, V4Action{
+			Key:        "s",
+			ActionType: domain.ActionStop,
+			Label:      "aplicar stop",
+		})
+	case "isolate":
+		actions = append(actions, V4Action{
+			Key:        "x",
+			ActionType: domain.ActionIsolateNetwork,
+			Label:      "aislar de red",
+		})
+	}
+
+	// Logs siempre disponible
+	actions = append(actions, V4Action{
+		Key:    "l",
+		IsLogs: true,
+		Label:  "ver logs",
+	})
+
+	// Solicitar IA si está en modo MANUAL o si el nivel es [RULE] o [SIG] o [AI~]
+	if m.aiConfig.SelectionMode == domain.SelectionManual || res.Level == domain.LevelRule || res.Level == domain.LevelSignal || res.Level == domain.LevelAIPartial {
+		actions = append(actions, V4Action{
+			Key:   "i",
+			IsAI:  true,
+			Label: "solicitar diagnóstico IA",
+		})
+	}
+
+	return actions
+}
+
+// viewDiagnosisModal renderiza el overlay centrado V4 de diagnóstico y observabilidad.
+func (m Model) viewDiagnosisModal() string {
+	modalWidth := 74
+	if m.width > 20 && m.width-4 < modalWidth {
+		modalWidth = m.width - 4
+	}
+	innerW := modalWidth - 6
+
+	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(fmt.Sprintf("diagnóstico · %s", m.selectedName))
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
+	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
+
+	var lines []string
+
+	// 1. Diagnóstico Principal (Tag + Causa Raíz)
+	res, hasRes := m.diagnosisResults[m.selectedID]
+	var tagStyled string
+	rootCause := "Sin diagnóstico concluyente"
+
+	if hasRes {
+		rootCause = res.RootCause
+		switch res.Level {
+		case domain.LevelAI:
+			tagStyled = StyleTagAI.Render("[AI]")
+		case domain.LevelAIPartial:
+			tagStyled = StyleTagAIPartial.Render("[AI~]")
+		case domain.LevelRule:
+			tagStyled = StyleTagRule.Render("[RULE]")
+		default:
+			tagStyled = StyleTagSignal.Render("[SIG]")
+		}
+	} else {
+		tagStyled = StyleTagSignal.Render("[SIG]")
+		if exitCode := domain.ParseExitCode(m.selectedState); exitCode >= 0 {
+			rootCause = fmt.Sprintf("Exit code %d · sin diagnóstico", exitCode)
+		} else {
+			rootCause = fmt.Sprintf("%s · sin diagnóstico", m.selectedState)
+		}
+	}
+
+	diagLine := fmt.Sprintf("%s %s", tagStyled, lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(rootCause))
+	lines = append(lines, diagLine, "")
+
+	// 2. Sección de Evidencia Tipada
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("evidencia:"))
+	evidences := BuildEvidence(m, m.pendingContainer, res, "")
+	if len(evidences) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · sin telemetría anómala registrada"))
+	} else {
+		for _, ev := range evidences {
+			dot := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("  ·")
+			label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label + ":")
+			val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
+			lines = append(lines, fmt.Sprintf("%s %s %s", dot, label, val))
+		}
+	}
+	lines = append(lines, "")
+
+	// 3. Acciones Sugeridas Navegables
+	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("acción sugerida:"))
+	actions := m.GetV4Actions(m.pendingContainer, res)
+
+	for i, act := range actions {
+		isCursor := i == m.v4ActionCursor
+		var row string
+		if isCursor {
+			ptr := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(">")
+			key := lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(fmt.Sprintf("[%s]", act.Key))
+			lbl := lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(act.Label)
+			row = fmt.Sprintf("  %s %s %s", ptr, key, lbl)
+		} else {
+			key := lipgloss.NewStyle().Foreground(ColorSubtext1).Render(fmt.Sprintf("[%s]", act.Key))
+			lbl := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(act.Label)
+			row = fmt.Sprintf("    %s %s", key, lbl)
+		}
+		lines = append(lines, row)
+	}
+
+	lines = append(lines, "")
+	footerHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
+	lines = append(lines, footerHint)
+
+	body := fmt.Sprintf("%s\n\n%s", header, strings.Join(lines, "\n"))
+	return StyleModal.Width(modalWidth).Render(body)
+}
+
+func formatDurationAgo(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("hace %ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("hace %dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("hace %dh", int(d.Hours()))
+}

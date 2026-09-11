@@ -7,8 +7,44 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// KeyBinding representa la asociación entre una tecla, su descripción y categoría funcional.
+type KeyBinding struct {
+	Key         string
+	Description string
+	Category    string // "Navegación", "Acciones", "Modelos de IA", "General"
+}
+
+// DefaultKeyBindings es la fuente única de verdad para los atajos de teclado de la TUI.
+var DefaultKeyBindings = []KeyBinding{
+	// Navegación
+	{Key: "↑ / k", Description: "Subir", Category: "Navegación"},
+	{Key: "↓ / j", Description: "Bajar", Category: "Navegación"},
+	{Key: "p", Description: "Fijar / Desanclar", Category: "Navegación"},
+	{Key: "P", Description: "Limpiar fijados", Category: "Navegación"},
+	{Key: "Enter / l", Description: "Ver logs", Category: "Navegación"},
+	{Key: "/", Description: "Buscar / Filtrar", Category: "Navegación"},
+
+	// Modelos de IA
+	{Key: "Tab", Description: "Ciclar modo IA", Category: "Modelos de IA"},
+	{Key: "c", Description: "Elegir modelo", Category: "Modelos de IA"},
+	{Key: "d", Description: "V4 diagnóstico", Category: "Modelos de IA"},
+	{Key: "i", Description: "Solicitar IA", Category: "Modelos de IA"},
+	{Key: "n", Description: "V5 red (próximamente)", Category: "Modelos de IA"},
+
+	// Acciones
+	{Key: "r", Description: "Reiniciar", Category: "Acciones"},
+	{Key: "s", Description: "Detener", Category: "Acciones"},
+	{Key: "x", Description: "Aislar de red", Category: "Acciones"},
+	{Key: "e", Description: "Abrir terminal", Category: "Acciones"},
+
+	// General
+	{Key: "t", Description: "Temas y estilos", Category: "General"},
+	{Key: "?", Description: "Ver esta ayuda", Category: "General"},
+	{Key: "q / Esc", Description: "Cerrar / Salir", Category: "General"},
+}
+
 func (m Model) viewHelp() string {
-	modalWidth := 72
+	modalWidth := 74
 	if m.width > 20 && m.width-4 < modalWidth {
 		modalWidth = m.width - 4
 	}
@@ -24,11 +60,16 @@ func (m Model) viewHelp() string {
 	sectionTitle := lipgloss.NewStyle().Bold(true).Foreground(ColorLavender).Background(ColorSurface0)
 	keyStyle := lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
 	descStyle := lipgloss.NewStyle().Foreground(ColorText).Background(ColorSurface0)
+	dimStyle := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0)
 
-	renderHelpRow := func(key, desc string) string {
-		kStr := keyStyle.Render(fmt.Sprintf("  %-11s", key))
+	renderHelpRow := func(kb KeyBinding) string {
+		kStr := keyStyle.Render(fmt.Sprintf("  %-11s", kb.Key))
 		descW := max(10, colW-13)
-		dStr := descStyle.Render(fmt.Sprintf("%-*s", descW, desc))
+		activeDescStyle := descStyle
+		if strings.Contains(kb.Description, "(próximamente)") {
+			activeDescStyle = dimStyle
+		}
+		dStr := activeDescStyle.Render(fmt.Sprintf("%-*s", descW, kb.Description))
 		return kStr + dStr
 	}
 
@@ -36,34 +77,35 @@ func (m Model) viewHelp() string {
 		return sectionTitle.Render(fmt.Sprintf("%-*s", colW, title))
 	}
 
-	// Columna Izquierda: Navegación & Modelos
+	// Agrupar atajos por categoría
+	catBindings := make(map[string][]KeyBinding)
+	for _, kb := range DefaultKeyBindings {
+		catBindings[kb.Category] = append(catBindings[kb.Category], kb)
+	}
+
+	// Columna Izquierda: Navegación y Modelos de IA
 	var leftLines []string
 	leftLines = append(leftLines, renderSectionHeader("Navegación"))
-	leftLines = append(leftLines, renderHelpRow("↑ / k", "Subir"))
-	leftLines = append(leftLines, renderHelpRow("↓ / j", "Bajar"))
-	leftLines = append(leftLines, renderHelpRow("p", "Fijar / Desanclar"))
-	leftLines = append(leftLines, renderHelpRow("P", "Limpiar fijados"))
-	leftLines = append(leftLines, renderHelpRow("Enter / l", "Ver logs"))
-	leftLines = append(leftLines, renderHelpRow("/", "Buscar / Filtrar"))
+	for _, kb := range catBindings["Navegación"] {
+		leftLines = append(leftLines, renderHelpRow(kb))
+	}
 	leftLines = append(leftLines, bgStyle.Render(strings.Repeat(" ", colW)))
 	leftLines = append(leftLines, renderSectionHeader("Modelos de IA"))
-	leftLines = append(leftLines, renderHelpRow("c", "Elegir modelo"))
-	leftLines = append(leftLines, renderHelpRow("Ctrl+A", "Configurar API Key"))
+	for _, kb := range catBindings["Modelos de IA"] {
+		leftLines = append(leftLines, renderHelpRow(kb))
+	}
 
-	// Columna Derecha: Acciones & General
+	// Columna Derecha: Acciones y General
 	var rightLines []string
 	rightLines = append(rightLines, renderSectionHeader("Acciones"))
-	rightLines = append(rightLines, renderHelpRow("r", "Reiniciar"))
-	rightLines = append(rightLines, renderHelpRow("s", "Detener"))
-	rightLines = append(rightLines, renderHelpRow("x", "Aislar de red"))
-	rightLines = append(rightLines, renderHelpRow("e", "Abrir terminal"))
+	for _, kb := range catBindings["Acciones"] {
+		rightLines = append(rightLines, renderHelpRow(kb))
+	}
 	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
 	rightLines = append(rightLines, renderSectionHeader("General"))
-	rightLines = append(rightLines, renderHelpRow("t", "Temas y estilos"))
-	rightLines = append(rightLines, renderHelpRow("?", "Ver esta ayuda"))
-	rightLines = append(rightLines, renderHelpRow("q / Esc", "Cerrar / Salir"))
-	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
-	rightLines = append(rightLines, bgStyle.Render(strings.Repeat(" ", colW)))
+	for _, kb := range catBindings["General"] {
+		rightLines = append(rightLines, renderHelpRow(kb))
+	}
 
 	sep := bgStyle.Render("    ")
 	maxRows := max(len(leftLines), len(rightLines))

@@ -339,7 +339,7 @@ func TestTUI_MetricsHistoryAndSparklines(t *testing.T) {
 
 	// Renderizar tabla principal: debe contener ficha técnica de métricas en tiempo real
 	rendered := m.View()
-	if !strings.Contains(rendered, "METRICAS EN TIEMPO REAL:") || !strings.Contains(rendered, "CPU:") || !strings.Contains(rendered, "RAM:") {
+	if !strings.Contains(rendered, "VITALES") || !strings.Contains(rendered, "CPU:") || !strings.Contains(rendered, "RAM:") {
 		t.Errorf("expected view to contain realtime metrics in split-pane, got:\n%s", rendered)
 	}
 
@@ -1023,8 +1023,13 @@ func TestTUI_Ola1_FallbackToRuleOnAIFailure(t *testing.T) {
 	if !strings.Contains(view, "OOMKilled") {
 		t.Errorf("expected view to contain 'OOMKilled', got:\n%s", view)
 	}
-	if !strings.Contains(view, "[r] Restart (sugerido)") {
-		t.Errorf("expected view to contain suggested action hint '[r] Restart (sugerido)', got:\n%s", view)
+
+	// Abrir V4 Diagnóstico con 'd' y verificar la acción sugerida
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	mV4 := newModel.(Model)
+	v4View := mV4.View()
+	if !strings.Contains(v4View, "[r] aplicar restart") {
+		t.Errorf("expected V4 view to contain suggested action '[r] aplicar restart', got:\n%s", v4View)
 	}
 }
 
@@ -1230,3 +1235,288 @@ func TestTUI_Ola1_ZeroRCE_NoAutoExecution(t *testing.T) {
 		t.Errorf("ZERO RCE VIOLATION: commands executed during check")
 	}
 }
+
+// ==============================================================================
+// OLA 2: PRUEBAS DE ACEPTACIÓN — CRITERIOS 1 AL 7
+// ==============================================================================
+
+// Criterio 1: Flujo crash 137 -> V4 ('d') -> navegar a [r] -> Enter -> Confirmar ('y') -> Ejecuta restart
+func TestTUI_Ola2_CrashToV4ToRemediation(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 120
+	m.height = 40
+
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-crash137",
+			Name:   "worker-crash",
+			Status: "Exited (137) 1 minute ago",
+		},
+	}
+	m.cursor = 0
+
+	// Diagnóstico Nivel 2 [RULE]
+	ruleRes := domain.DiagnosisResult{
+		Level:           domain.LevelRule,
+		RootCause:       "OOMKilled: contenedor superó límite de memoria",
+		Severity:        "critical",
+		SuggestedAction: "restart",
+	}
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c-crash137",
+		result:      ruleRes,
+	})
+	m = newModel.(Model)
+
+	// 1. Presionar 'd' abre V4 Diagnóstico
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = newModel.(Model)
+	if m.activeState != stateDiagnosisModal {
+		t.Fatalf("expected stateDiagnosisModal, got %v", m.activeState)
+	}
+
+	// Verificar contenido de V4
+	v4View := m.View()
+	if !strings.Contains(v4View, "[RULE]") || !strings.Contains(v4View, "OOMKilled") {
+		t.Errorf("expected V4 view to show [RULE] and OOMKilled, got:\n%s", v4View)
+	}
+	if !strings.Contains(v4View, "evidencia:") {
+		t.Errorf("expected V4 to have evidence section")
+	}
+	if !strings.Contains(v4View, "> [r] aplicar restart") {
+		t.Errorf("expected suggested restart action to be selected with '>', got:\n%s", v4View)
+	}
+
+	// 2. Presionar 'Enter' sobre la acción seleccionada abre modal de confirmación (D1 CERO RCE)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(Model)
+	if m.activeState != stateConfirmRemediation {
+		t.Fatalf("expected stateConfirmRemediation after Enter in V4, got %v", m.activeState)
+	}
+	if m.pendingAction != domain.ActionRestart {
+		t.Errorf("expected pending action restart, got %v", m.pendingAction)
+	}
+	if len(mockColl.executedCmds) != 0 {
+		t.Fatalf("ZERO RCE VIOLATION: command was executed before user confirmation")
+	}
+
+	// 3. Confirmar con 'y'
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = newModel.(Model)
+	if m.activeState != stateFleetTable {
+		t.Errorf("expected return to stateFleetTable after confirm, got %v", m.activeState)
+	}
+	if cmd == nil {
+		t.Errorf("expected command returned to execute remediation")
+	}
+}
+
+// Criterio 2: Panel derecho sin bloque ACCIONES DISPONIBLES y con 4 secciones
+func TestTUI_Ola2_RightPanelWithoutActionsBlock(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:             "c-detail",
+			Name:           "api-service",
+			Status:         "running",
+			CPUPercent:     12.0,
+			RAMBytes:       256 * 1024 * 1024,
+			RAMLimitBytes:  512 * 1024 * 1024,
+			ComposeProject: "server_tracker",
+			Networks:       []string{"solv_net"},
+			Ports:          []string{"8080->80"},
+			VolumeCount:    2,
+		},
+	}
+	m.cursor = 0
+
+	view := m.View()
+
+	// Prohibido bloque "ACCIONES DISPONIBLES"
+	if strings.Contains(view, "ACCIONES DISPONIBLES") {
+		t.Errorf("panel derecho no debe mostrar el bloque 'ACCIONES DISPONIBLES'")
+	}
+
+	// 4 secciones interpretadas requeridas
+	if !strings.Contains(view, "CICLO DE VIDA") {
+		t.Errorf("expected section 'CICLO DE VIDA' in right panel")
+	}
+	if !strings.Contains(view, "VITALES") {
+		t.Errorf("expected section 'VITALES' in right panel")
+	}
+	if !strings.Contains(view, "DIAGNÓSTICO") {
+		t.Errorf("expected section 'DIAGNÓSTICO' in right panel")
+	}
+	if !strings.Contains(view, "CONTEXTO") {
+		t.Errorf("expected section 'CONTEXTO' in right panel")
+	}
+	if !strings.Contains(view, "compose: server_tracker") {
+		t.Errorf("expected compose project to be rendered in CONTEXTO")
+	}
+}
+
+// Criterio 3: Help overlay sin teclas fantasma (sin Ctrl+A, con c y d)
+func TestTUI_Ola2_HelpOverlaySingleSource(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.activeState = stateHelp
+
+	view := m.View()
+
+	if strings.Contains(view, "Ctrl+A") {
+		t.Errorf("help overlay must NOT contain obsolete 'Ctrl+A' key")
+	}
+	if !strings.Contains(view, "c") || !strings.Contains(view, "Elegir modelo") {
+		t.Errorf("help overlay must contain 'c' for Elegir modelo")
+	}
+	if !strings.Contains(view, "d") || !strings.Contains(view, "V4 diagnóstico") {
+		t.Errorf("help overlay must contain 'd' for V4 diagnóstico")
+	}
+}
+
+// Criterio 4: Throttling de CPU siempre visible en vitales (incluso 0%)
+func TestTUI_Ola2_ThrottlingAlwaysVisible(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:                  "c-zero-throttle",
+			Name:                "worker-ok",
+			Status:              "running",
+			CPUPercent:          5.0,
+			CPUPercentThrottled: 0.0,
+		},
+	}
+	m.cursor = 0
+
+	view := m.View()
+	if !strings.Contains(view, "throttling 0%") {
+		t.Errorf("CPU line must always display throttling percentage even when 0%%, got:\n%s", view)
+	}
+}
+
+// Criterio 5: Evidencia tipada y extensible (admite tipo 'historial' sin romperse)
+func TestTUI_Ola2_TypedEvidenceExtensible(t *testing.T) {
+	m := NewModel(nil)
+	c := domain.ContainerMetric{
+		ID:                  "c-ev",
+		Name:                "test-ev",
+		Status:              "Exited (137) 2 minutes ago",
+		RAMBytes:            508 * 1024 * 1024,
+		RAMLimitBytes:       512 * 1024 * 1024,
+		CPUPercent:          10.0,
+		CPUPercentThrottled: 25.0,
+		RestartCount:        3,
+	}
+	res := domain.DiagnosisResult{
+		Level:     domain.LevelRule,
+		RootCause: "OOMKilled",
+	}
+
+	evs := BuildEvidence(m, c, res, "Killed process 1234 (node)")
+	if len(evs) == 0 {
+		t.Fatalf("expected evidence items to be generated")
+	}
+
+	// Agregar un item de tipo mock 'historial' (Ola 4) para verificar extensibilidad
+	evs = append(evs, EvidenceItem{
+		Type:  "historial",
+		Label: "crash_previo",
+		Value: "hace 10m por OOM",
+	})
+
+	foundHist := false
+	for _, ev := range evs {
+		if ev.Type == "historial" && ev.Label == "crash_previo" {
+			foundHist = true
+			break
+		}
+	}
+	if !foundHist {
+		t.Errorf("failed to extend evidence list with 'historial' item")
+	}
+}
+
+// Criterio 6: V4 se renderiza como overlay centrado y conserva flota detrás
+func TestTUI_Ola2_CenteredOverlay(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-front",
+			Name:   "front-app",
+			Status: "running",
+		},
+	}
+	m.cursor = 0
+
+	// Abrir V4
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = newModel.(Model)
+
+	view := m.View()
+	// Contiene el encabezado del modal V4
+	if !strings.Contains(view, "diagnóstico · front-app") {
+		t.Errorf("expected V4 modal header in view, got:\n%s", view)
+	}
+	// Y la flota sigue visible en el fondo detrás del overlay
+	if !strings.Contains(view, "CONTENEDORES") {
+		t.Errorf("expected background fleet table to remain visible behind modal, got:\n%s", view)
+	}
+
+	// Cerrar con Esc
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(Model)
+	if m.activeState != stateFleetTable {
+		t.Errorf("expected return to stateFleetTable after Esc in V4, got %v", m.activeState)
+	}
+}
+
+// Criterio 7: Cero RCE en V4 (navegación y selección jamás ejecutan comandos automáticos)
+func TestTUI_Ola2_ZeroRCE_NoAutoExecution(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 120
+	m.height = 40
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-safe",
+			Name:   "safe-app",
+			Status: "Exited (137) 1 minute ago",
+		},
+	}
+	m.cursor = 0
+
+	ruleRes := domain.DiagnosisResult{
+		Level:           domain.LevelRule,
+		RootCause:       "OOMKilled: contenedor superó límite de memoria",
+		SuggestedAction: "restart",
+	}
+	newModel, _ := m.Update(diagnosisResultMsg{
+		containerID: "c-safe",
+		result:      ruleRes,
+	})
+	m = newModel.(Model)
+
+	// Abrir V4
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = newModel.(Model)
+
+	// Navegar con j y k
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = newModel.(Model)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = newModel.(Model)
+
+	// Verificar que mockColl.executedCmds sigue 0
+	if len(mockColl.executedCmds) != 0 {
+		t.Fatalf("ZERO RCE VIOLATION: command was executed while navigating V4: %v", mockColl.executedCmds)
+	}
+}
+

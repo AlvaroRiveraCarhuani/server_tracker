@@ -104,3 +104,59 @@ func TestCalculateRealRAM(t *testing.T) {
 		t.Errorf("CalculateRealRAM() limit = %v, esperado 1GB", limit)
 	}
 }
+
+func TestCalculateCPUThrottlingPercent(t *testing.T) {
+	tests := []struct {
+		name     string
+		stats    *dockertypes.StatsResponse
+		expected float64
+	}{
+		{
+			name: "Con periodos throttled (34%)",
+			stats: &dockertypes.StatsResponse{
+				CPUStats: dockertypes.CPUStats{
+					ThrottlingData: dockertypes.ThrottlingData{
+						Periods:          100,
+						ThrottledPeriods: 34,
+						ThrottledTime:    500000000,
+					},
+				},
+			},
+			expected: 34.0,
+		},
+		{
+			name: "Sin periodos throttled (0%)",
+			stats: &dockertypes.StatsResponse{
+				CPUStats: dockertypes.CPUStats{
+					ThrottlingData: dockertypes.ThrottlingData{
+						Periods:          50,
+						ThrottledPeriods: 0,
+					},
+				},
+			},
+			expected: 0.0,
+		},
+		{
+			name: "Sin periodos evaluados (periods = 0)",
+			stats: &dockertypes.StatsResponse{
+				CPUStats: dockertypes.CPUStats{
+					ThrottlingData: dockertypes.ThrottlingData{
+						Periods:          0,
+						ThrottledPeriods: 0,
+					},
+				},
+			},
+			expected: 0.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := docker.CalculateCPUThrottlingPercent(tt.stats)
+			if got != tt.expected {
+				t.Errorf("CalculateCPUThrottlingPercent() = %v, esperado %v", got, tt.expected)
+			}
+		})
+	}
+}
+
