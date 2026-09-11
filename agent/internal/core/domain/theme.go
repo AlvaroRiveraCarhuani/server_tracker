@@ -6,6 +6,7 @@ type ThemeConfig struct {
 	NerdFonts            bool   `json:"nerd_fonts"`             // true para glifos ricos, false para ASCII puro
 	BorderStyle          string `json:"border_style"`           // "double", "rounded", "sharp"
 	IncidentBannerPolicy string `json:"incident_banner_policy"` // "informativo" (default) o "prudente"
+	OnboardingHintShown  bool   `json:"onboarding_hint_shown"`  // true si el toast de atajos inicial ya fue visto
 }
 
 // DefaultThemeConfig devuelve la configuración estética predeterminada.
@@ -15,6 +16,7 @@ func DefaultThemeConfig() ThemeConfig {
 		NerdFonts:            true,
 		BorderStyle:          "double",
 		IncidentBannerPolicy: "informativo",
+		OnboardingHintShown:  false,
 	}
 }
 

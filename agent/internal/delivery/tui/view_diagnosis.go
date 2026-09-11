@@ -265,9 +265,6 @@ func (m Model) viewDiagnosisModal() string {
 
 	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
 	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(fmt.Sprintf("diagnóstico · %s", m.selectedName))
-	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
-	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
-	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
 
 	var lines []string
 
@@ -311,7 +308,13 @@ func (m Model) viewDiagnosisModal() string {
 	if len(evidences) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · sin telemetría anómala registrada"))
 	} else {
-		for _, ev := range evidences {
+		compact := m.height < 30
+		maxEv := len(evidences)
+		if compact && maxEv > 4 {
+			maxEv = 4
+		}
+		for i := 0; i < maxEv; i++ {
+			ev := evidences[i]
 			dot := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("  ·")
 			if ev.Type == "red" {
 				label := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(ev.Label)
@@ -322,6 +325,9 @@ func (m Model) viewDiagnosisModal() string {
 				val := lipgloss.NewStyle().Foreground(ColorText).Render(ev.Value)
 				lines = append(lines, fmt.Sprintf("%s %s %s", dot, label, val))
 			}
+		}
+		if compact && len(evidences) > 4 {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  · +%d más", len(evidences)-4)))
 		}
 	}
 	lines = append(lines, "")
@@ -350,7 +356,22 @@ func (m Model) viewDiagnosisModal() string {
 	footerHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
 	lines = append(lines, footerHint)
 
-	body := fmt.Sprintf("%s\n\n%s", header, strings.Join(lines, "\n"))
+	// Scroll y Viewport (F3)
+	availH := max(6, m.height-6)
+	displayedLines := lines
+	scrollBadge := ""
+	if len(lines) > availH {
+		maxOffset := len(lines) - availH
+		offset := max(0, min(m.overlayScrollOffset, maxOffset))
+		displayedLines = lines[offset : offset+availH]
+		scrollBadge = fmt.Sprintf("(%d/%d) ", offset+1, maxOffset+1)
+	}
+
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(scrollBadge + "esc")
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
+	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
+
+	body := fmt.Sprintf("%s\n\n%s", header, strings.Join(displayedLines, "\n"))
 	return StyleModal.Width(modalWidth).Render(body)
 }
 
@@ -381,8 +402,8 @@ func (m Model) getIncidentContainersList() []string {
 			seen[c] = true
 		}
 	}
-	for name := range m.activeIncident.Members {
-		clean := strings.TrimPrefix(name, "/")
+	for _, member := range m.activeIncident.Members {
+		clean := strings.TrimPrefix(member.Name, "/")
 		if !seen[clean] {
 			list = append(list, clean)
 			seen[clean] = true
@@ -406,9 +427,6 @@ func (m Model) viewIncidentDiagnosisModal() string {
 
 	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
 	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(fmt.Sprintf("diagnóstico · incidente %s", inc.GroupName))
-	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
-	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
-	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
 
 	var lines []string
 
@@ -470,12 +488,17 @@ func (m Model) viewIncidentDiagnosisModal() string {
 	}
 	lines = append(lines, "")
 
-	// 3. Bloque Timeline
+	// 3. Bloque Timeline (F3 modo compacto: últimos 3 + +N más)
+	compact := m.height < 30
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("timeline:"))
 	if len(inc.Events) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · sin eventos registrados"))
 	} else {
-		for _, ev := range inc.Events {
+		eventsToShow := inc.Events
+		if compact && len(inc.Events) > 3 {
+			eventsToShow = inc.Events[len(inc.Events)-3:]
+		}
+		for _, ev := range eventsToShow {
 			timeStr := ev.Timestamp.Format("15:04:05")
 			reasonStr := ev.Reason
 			if reasonStr == "" {
@@ -487,19 +510,29 @@ func (m Model) viewIncidentDiagnosisModal() string {
 				lipgloss.NewStyle().Foreground(ColorSubtext0).Render(reasonStr),
 			))
 		}
+		if compact && len(inc.Events) > 3 {
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  · +%d más", len(inc.Events)-3)))
+		}
 	}
 
-	// 4. Bloque Cascada
+	// 4. Bloque Cascada con Wrap por Tokens (F3)
 	if len(inc.Cascade) > 0 {
 		cascadeStr := strings.Join(inc.Cascade, " -> ") + " (inferido)"
-		lines = append(lines, fmt.Sprintf("%s %s",
-			lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("cascada:"),
-			lipgloss.NewStyle().Foreground(ColorText).Render(cascadeStr),
-		))
+		wrapped := WrapByTokens(cascadeStr, max(20, innerW-10))
+		for i, cw := range wrapped {
+			if i == 0 {
+				lines = append(lines, fmt.Sprintf("%s %s",
+					lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("cascada:"),
+					lipgloss.NewStyle().Foreground(ColorText).Render(cw),
+				))
+			} else {
+				lines = append(lines, fmt.Sprintf("         %s", lipgloss.NewStyle().Foreground(ColorText).Render(cw)))
+			}
+		}
 	}
 	lines = append(lines, "")
 
-	// 5. Bloque Contenedores Navegables
+	// 5. Bloque Contenedores Navegables e Indicador de Vecinos Sanos (F4)
 	containersList := m.getIncidentContainersList()
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("contenedores:"))
 	hasActionRow := (inc.ManualOrigin != "" || inc.OriginConfidence != domain.ConfidenceUndetermined) && originName != ""
@@ -523,6 +556,13 @@ func (m Model) viewIncidentDiagnosisModal() string {
 			row = fmt.Sprintf("    %s  %s  %s", nameStyled, enterBadge, oBadge)
 		}
 		lines = append(lines, row)
+	}
+
+	healthyCount := service.CountHealthyPeers(inc.GroupName, m.metrics)
+	if healthyCount > 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
+			fmt.Sprintf("  otros en %s: %d · sin anomalías", inc.GroupName, healthyCount),
+		))
 	}
 	lines = append(lines, "")
 
@@ -558,6 +598,21 @@ func (m Model) viewIncidentDiagnosisModal() string {
 	footerHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
 	lines = append(lines, footerHint)
 
-	body := fmt.Sprintf("%s\n\n%s", header, strings.Join(lines, "\n"))
+	// Scroll y Viewport (F3)
+	availH := max(6, m.height-6)
+	displayedLines := lines
+	scrollBadge := ""
+	if len(lines) > availH {
+		maxOffset := len(lines) - availH
+		offset := max(0, min(m.overlayScrollOffset, maxOffset))
+		displayedLines = lines[offset : offset+availH]
+		scrollBadge = fmt.Sprintf("(%d/%d) ", offset+1, maxOffset+1)
+	}
+
+	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(scrollBadge + "esc")
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
+	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
+
+	body := fmt.Sprintf("%s\n\n%s", header, strings.Join(displayedLines, "\n"))
 	return StyleModal.Width(modalWidth).Render(body)
 }

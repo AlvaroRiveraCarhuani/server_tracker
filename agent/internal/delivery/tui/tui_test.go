@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2965,6 +2968,376 @@ func TestTUI_Ola6_Criterio10_CeroVistasNuevas(t *testing.T) {
 	}
 	if !strings.Contains(view, "o") || !strings.Contains(view, "Marcar origen") {
 		t.Errorf("help overlay must include 'o' for Marcar origen, got:\n%s", view)
+	}
+}
+
+// =========================================================================
+// OLA 7: ENDURECIMIENTO DE CAMPO (8 CRITERIOS DE ACEPTACIÓN)
+// =========================================================================
+
+// Criterio 1: -race limpio con loop concurrente de métricas e incidentes
+func TestTUI_Ola7_Criterio1_RaceLimpio(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 100
+	m.height = 30
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Goroutine simulando colector en background
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			select {
+			case <-done:
+				return
+			default:
+				time.Sleep(1 * time.Millisecond)
+				_, _ = mockColl.Collect(context.Background())
+			}
+		}
+	}()
+
+	// Goroutine principal de Bubbletea updates y views
+	for i := 0; i < 50; i++ {
+		now := time.Now()
+		c1 := domain.ContainerMetric{
+			ID:              "c-pg",
+			Name:            "postgres",
+			Status:          "Exited (137)",
+			ComposeProject:  "solv_stack",
+			Networks:        []string{"solv_net"},
+			LastStateChange: now.Add(-5 * time.Second),
+		}
+		c2 := domain.ContainerMetric{
+			ID:              "c-api",
+			Name:            "api-node",
+			Status:          "Exited (1)",
+			ComposeProject:  "solv_stack",
+			Networks:        []string{"solv_net"},
+			LastStateChange: now.Add(-2 * time.Second),
+		}
+
+		m1, _ := m.Update([]domain.ContainerMetric{c1, c2})
+		m = m1.(Model)
+		_ = m.View()
+
+		m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = m2.(Model)
+		_ = m.View()
+	}
+
+	close(done)
+	wg.Wait()
+}
+
+// Criterio 2: Trap de pánico y restauración de TTY con crash.log
+func TestTUI_Ola7_Criterio2_PanicoForzadoYTTY(t *testing.T) {
+	// Probar que AppendCrashLog escribe el formato requerido
+	stack := []byte("goroutine 1 [running]:\nmain.testPanic()\n\t/fake/path.go:10")
+	logPath := AppendCrashLog("simulated nil dereference", stack)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read crash log: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "version="+AppVersion) {
+		t.Errorf("expected crash log to contain version=%s, got:\n%s", AppVersion, content)
+	}
+	if !strings.Contains(content, "simulated nil dereference") {
+		t.Errorf("expected crash log to contain panic reason, got:\n%s", content)
+	}
+	if !strings.Contains(content, "main.testPanic") {
+		t.Errorf("expected crash log to contain stack trace, got:\n%s", content)
+	}
+
+	// Restaurar TTY no debe paniquear
+	RestoreTTY()
+}
+
+// Criterio 3: Cero WithMouse en el repositorio
+func TestTUI_Ola7_Criterio3_CeroWithMouseEnRepo(t *testing.T) {
+	// Inspeccionar archivos .go en internal/delivery/tui y cmd
+	searchPaths := []string{"../../cmd", "../../internal/delivery/tui"}
+	for _, sp := range searchPaths {
+		err := filepath.Walk(sp, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return nil
+			}
+			if strings.Contains(string(content), "WithMouse") {
+				t.Errorf("file %s contains prohibited mouse tracking option 'WithMouse*'", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Logf("walk warning for path %s: %v", sp, err)
+		}
+	}
+}
+
+// Criterio 4: Terminal de 25 filas modo compacto
+func TestTUI_Ola7_Criterio4_TerminalCompacto25Filas(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 80
+	m.height = 25 // Piso estricto de 25 filas
+
+	now := time.Now()
+	// Crear 5 eventos anómalos en el incidente
+	var metrics []domain.ContainerMetric
+	for i := 1; i <= 5; i++ {
+		metrics = append(metrics, domain.ContainerMetric{
+			ID:              fmt.Sprintf("c-svc-%d", i),
+			Name:            fmt.Sprintf("svc-%d", i),
+			Status:          "Exited (1)",
+			ComposeProject:  "microservices",
+			Networks:        []string{"net_ms"},
+			LastStateChange: now.Add(time.Duration(-10+i) * time.Second),
+		})
+	}
+
+	m1, _ := m.Update(metrics)
+	mod := m1.(Model)
+
+	// Abrir V4 de diagnóstico (modo incidente)
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	diagMod := m2.(Model)
+	if diagMod.activeState != stateDiagnosisModal {
+		t.Fatalf("expected stateDiagnosisModal, got %v", diagMod.activeState)
+	}
+
+	view := diagMod.View()
+
+	// En 25 filas, el timeline compacto muestra "+2 más" (5 - 3 = 2)
+	if !strings.Contains(view, "+2 más") {
+		t.Errorf("expected compact timeline to show '+2 más' for 5 events, got:\n%s", view)
+	}
+
+	// Debe mostrar scroll indicator o esc
+	if !strings.Contains(view, "esc") {
+		t.Errorf("expected esc in header, got:\n%s", view)
+	}
+}
+
+// Criterio 5: 80 columnas y cascada larga wrappea por tokens sin partir nombres ni flechas
+func TestTUI_Ola7_Criterio5_WrapTokens80Columnas(t *testing.T) {
+	longCascade := "postgres-primary-db -> backend-auth-service-node -> front-nginx-loadbalancer-external (inferido)"
+	lines := WrapByTokens(longCascade, 45)
+
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped lines >= 2, got %d", len(lines))
+	}
+
+	for _, line := range lines {
+		// Ningún token o flecha debe aparecer roto
+		if strings.HasSuffix(line, "-") && !strings.HasSuffix(line, " ->") {
+			t.Errorf("token was hyphen-split across boundary: %q", line)
+		}
+		if lipgloss.Width(line) > 45 {
+			t.Errorf("line exceeded max width 45: %q (w=%d)", line, lipgloss.Width(line))
+		}
+	}
+}
+
+// Criterio 6: Escenario del reporte: 10 contenedores en compose, 2 fallando
+func TestTUI_Ola7_Criterio6_EscenarioReporteCompose10(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 100
+	m.height = 30
+
+	now := time.Now()
+	var metrics []domain.ContainerMetric
+
+	// 2 fallando
+	c1 := domain.ContainerMetric{
+		ID:              "c-postgres11",
+		Name:            "postgres",
+		Status:          "Exited (137)",
+		ComposeProject:  "server_tracker",
+		Networks:        []string{"st_net"},
+		LastStateChange: now.Add(-10 * time.Second),
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c-api2222222",
+		Name:            "api",
+		Status:          "Exited (1)",
+		ComposeProject:  "server_tracker",
+		Networks:        []string{"st_net"},
+		LastStateChange: now.Add(-5 * time.Second),
+	}
+	metrics = append(metrics, c1, c2)
+
+	// 1 en estado Created normal (NO es anomalía en Fase 6)
+	cCreated := domain.ContainerMetric{
+		ID:             "c-migration0",
+		Name:           "migration",
+		Status:         "Created",
+		ComposeProject: "server_tracker",
+		Networks:       []string{"st_net"},
+	}
+	metrics = append(metrics, cCreated)
+
+	// 7 en running saludable
+	for i := 1; i <= 7; i++ {
+		metrics = append(metrics, domain.ContainerMetric{
+			ID:             fmt.Sprintf("c-healthy%04d", i),
+			Name:           fmt.Sprintf("worker-%d", i),
+			Status:         "running",
+			ComposeProject: "server_tracker",
+			Networks:       []string{"st_net"},
+		})
+	}
+
+	m1, _ := m.Update(metrics)
+	mod := m1.(Model)
+
+	inc := mod.incidentAggregator.GetActiveIncidentFor("postgres")
+	if inc == nil {
+		t.Fatalf("expected active incident for postgres")
+	}
+
+	// 1. Miembros = exactamente 2 (c1 y c2) deduplicados por ID canónico
+	if len(inc.Members) != 2 {
+		t.Errorf("expected exactly 2 members in incident, got %d", len(inc.Members))
+	}
+	if _, ok := inc.Members["c-postgres11"]; !ok {
+		t.Errorf("expected member c-postgres11 in incident")
+	}
+	if _, ok := inc.Members["c-api2222222"]; !ok {
+		t.Errorf("expected member c-api2222222 in incident")
+	}
+
+	// 2. Timeline NO contiene eventos Created
+	for _, ev := range inc.Events {
+		if strings.Contains(strings.ToLower(ev.Status), "created") {
+			t.Errorf("prohibited 'Created' event found in incident timeline: %+v", ev)
+		}
+	}
+
+	// 3. Abrir modal y verificar línea de vecinos sanos: 8 (7 running + 1 created no anómalo)
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	diagMod := m2.(Model)
+	view := diagMod.View()
+
+	if !strings.Contains(view, "otros en server_tracker: 8 · sin anomalías") {
+		t.Errorf("expected healthy peers line 'otros en server_tracker: 8 · sin anomalías', got:\n%s", view)
+	}
+}
+
+// Criterio 7: Status bar sin keymap, [?] en cabecera y toast de primera ejecución
+func TestTUI_Ola7_Criterio7_PisoLimpioYToast(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	mockV := &mockVaultForTUI{
+		savedThemeConfig: domain.ThemeConfig{
+			ActiveTheme:         "tokyo-night",
+			OnboardingHintShown: false, // Primera ejecución
+		},
+	}
+	m := NewModel(mockColl, mockV)
+	m.width = 100
+	m.height = 30
+
+	view1 := m.View()
+
+	// Cabecera contiene afijo [?]
+	if !strings.Contains(view1, "[?]") {
+		t.Errorf("expected header to contain affix '[?]', got:\n%s", view1)
+	}
+
+	// Toast visible en primera ejecución
+	if !strings.Contains(view1, "pulsa ? para ver atajos") {
+		t.Errorf("expected onboarding toast in first run, got:\n%s", view1)
+	}
+
+	// Status bar NO contiene el keymap redundante
+	if strings.Contains(view1, "[j/k]: Navegar") || strings.Contains(view1, "[p]: Fijar") {
+		t.Errorf("status bar must NOT contain exhaustive keymap, got:\n%s", view1)
+	}
+
+	// Presionar una tecla debe ocultar el toast y persistir flag
+	m1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	mod2 := m1.(Model)
+
+	if !mod2.themeConfig.OnboardingHintShown {
+		t.Errorf("expected OnboardingHintShown to be true after keypress")
+	}
+
+	view2 := mod2.View()
+	if strings.Contains(view2, "pulsa ? para ver atajos") {
+		t.Errorf("toast must NOT appear after first keypress, got:\n%s", view2)
+	}
+
+	// Tecla '?' abre help
+	m3, _ := mod2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	helpMod := m3.(Model)
+	if helpMod.activeState != stateHelp {
+		t.Errorf("expected '?' to open stateHelp, got %v", helpMod.activeState)
+	}
+}
+
+// Criterio 8: No regresión de olas 0 a 6
+func TestTUI_Ola7_Criterio8_NoRegresionOlas0a6(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	m := NewModel(mockColl)
+	m.width = 100
+	m.height = 30
+
+	now := time.Now()
+	c1 := domain.ContainerMetric{
+		ID:              "c-redis",
+		Name:            "redis-cache",
+		Status:          "Exited (137)",
+		ComposeProject:  "app_stack",
+		Networks:        []string{"app_net"},
+		LastStateChange: now.Add(-10 * time.Second),
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c-web",
+		Name:            "web-app",
+		Status:          "Exited (1)",
+		ComposeProject:  "app_stack",
+		Networks:        []string{"app_net"},
+		LastStateChange: now.Add(-5 * time.Second),
+	}
+
+	m1, _ := m.Update([]domain.ContainerMetric{c1, c2})
+	mod := m1.(Model)
+
+	// 1. Offline [RULE] y Banner [INC]
+	view := mod.View()
+	if !strings.Contains(view, "[INC]") {
+		t.Errorf("expected unified [INC] banner, got:\n%s", view)
+	}
+	if !strings.Contains(view, "[RULE]") {
+		t.Errorf("expected offline [RULE] level, got:\n%s", view)
+	}
+
+	// 2. Meter de sesión visible
+	if !strings.Contains(view, "sesión:") {
+		t.Errorf("expected session meter in status bar, got:\n%s", view)
+	}
+
+	// 3. Flujo cuota / IA con 'c'
+	m2, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	configMod := m2.(Model)
+	if configMod.activeState != stateConfigModal {
+		t.Errorf("expected 'c' to open stateConfigModal, got %v", configMod.activeState)
+	}
+
+	// 4. Modal de confirmación con 'r'
+	m3, _ := mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	confirmMod := m3.(Model)
+	if confirmMod.activeState != stateConfirmRemediation {
+		t.Errorf("expected 'r' to open stateConfirmRemediation, got %v", confirmMod.activeState)
 	}
 }
 

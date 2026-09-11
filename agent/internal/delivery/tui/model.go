@@ -89,6 +89,11 @@ type Model struct {
 	lastSync         time.Time
 	width            int
 	height           int
+
+	// Responsividad y Toast de Primera Ejecución (Ola 7)
+	overlayScrollOffset int
+	toastVisible        bool
+	toastExpiry         time.Time
 }
 
 // NewModel inicializa el modelo de la TUI con soporte de bóveda para AIOps.
@@ -238,6 +243,9 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		lastSync:             time.Now(),
 		width:                100,
 		height:               24,
+		overlayScrollOffset:  0,
+		toastVisible:         !themeCfg.OnboardingHintShown,
+		toastExpiry:          time.Now().Add(5 * time.Second),
 	}
 }
 
@@ -459,13 +467,19 @@ func (m Model) executeRemediation(c domain.ContainerMetric, action domain.Action
 	}
 }
 
-// RunTUI inicia el programa interactivo Bubbletea con soporte de mouse.
-func RunTUI(collector ports.CollectorPort, v ...ports.VaultPort) error {
+// RunTUI inicia el programa interactivo Bubbletea con blindaje de TTY y trap de pánico (F2).
+func RunTUI(collector ports.CollectorPort, v ...ports.VaultPort) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			HandlePanic(r)
+		}
+	}()
+
 	p := tea.NewProgram(
 		NewModel(collector, v...),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
-	_, err := p.Run()
+	_, err = p.Run()
+	RestoreTTY()
 	return err
 }

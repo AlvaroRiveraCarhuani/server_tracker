@@ -81,6 +81,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.toastVisible {
+			m.toastVisible = false
+			if !m.themeConfig.OnboardingHintShown {
+				m.themeConfig.OnboardingHintShown = true
+				if m.vaultService != nil {
+					_ = m.vaultService.SaveThemeConfig(m.themeConfig)
+				}
+			}
+		}
+
 		switch m.activeState {
 		case stateFiltering:
 			switch msg.String() {
@@ -108,8 +118,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case stateHelp:
-			if msg.String() == "esc" || msg.String() == "?" || msg.String() == "q" {
+			switch msg.String() {
+			case "esc", "?", "q":
 				m.activeState = stateFleetTable
+				return m, nil
+			case "up", "k":
+				if m.overlayScrollOffset > 0 {
+					m.overlayScrollOffset--
+				}
+				return m, nil
+			case "down", "j":
+				m.overlayScrollOffset++
+				return m, nil
 			}
 
 		case stateThemeModal:
@@ -223,10 +243,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.v4IncidentCursor > 0 {
 						m.v4IncidentCursor--
 					}
+					if m.v4IncidentCursor < m.overlayScrollOffset {
+						m.overlayScrollOffset = m.v4IncidentCursor
+					}
 					return m, nil
 				case "down", "j":
 					if m.v4IncidentCursor < maxCursor {
 						m.v4IncidentCursor++
+					}
+					if m.v4IncidentCursor >= m.overlayScrollOffset+4 {
+						m.overlayScrollOffset = m.v4IncidentCursor - 3
 					}
 					return m, nil
 				case "o":
@@ -334,11 +360,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.v4ActionCursor > 0 {
 					m.v4ActionCursor--
 				}
+				if m.overlayScrollOffset > 0 {
+					m.overlayScrollOffset--
+				}
 				return m, nil
 			case "down", "j":
 				if len(actions) > 0 && m.v4ActionCursor < len(actions)-1 {
 					m.v4ActionCursor++
 				}
+				m.overlayScrollOffset++
 				return m, nil
 			case "enter":
 				if len(actions) > 0 && m.v4ActionCursor < len(actions) {
@@ -816,6 +846,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case "c":
+				m.overlayScrollOffset = 0
 				m.activeState = stateConfigModal
 				m.aiState = aiViewPolicy
 				m.aiPolicyCursor = 0
@@ -830,6 +861,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingContainer = c
 					m.v4ActionCursor = 0
 					m.v4IncidentCursor = 0
+					m.overlayScrollOffset = 0
 
 					if m.incidentAggregator != nil {
 						m.activeIncident = m.incidentAggregator.GetActiveIncidentFor(c.Name)
@@ -856,11 +888,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedName = c.Name
 					m.selectedState = c.Status
 					m.pendingContainer = c
+					m.overlayScrollOffset = 0
 					m.activeState = stateNetworkModal
 					return m, nil
 				}
 
 			case "t":
+				m.overlayScrollOffset = 0
 				m.activeState = statePreferences
 				m.preferencesCursor = 0
 				return m, nil
@@ -912,6 +946,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.activeState = stateConfirmRemediation
 				}
 			case "?":
+				m.overlayScrollOffset = 0
 				m.activeState = stateHelp
 			}
 		}

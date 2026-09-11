@@ -31,14 +31,33 @@ type ContainerMetric struct {
 	Timestamp           time.Time `json:"timestamp"`
 }
 
-// IsAnomalous evalúa si un contenedor presenta comportamiento anómalo.
+// IsAnomalous evalúa si un contenedor presenta comportamiento anómalo (Fase 6).
+// Eventos benignos de ciclo de vida (created, started, paused, exited 0) nunca se consideran anomalías.
 func IsAnomalous(c ContainerMetric) bool {
-	if strings.ToLower(c.Status) != "running" {
+	status := strings.ToLower(strings.TrimSpace(c.Status))
+	if status == "running" || status == "created" || status == "paused" || status == "started" {
+		if c.RAMLimitBytes > 0 && float64(c.RAMBytes)/float64(c.RAMLimitBytes) >= 0.85 {
+			return true
+		}
+		return false
+	}
+
+	exitCode := ParseExitCode(c.Status)
+	if exitCode == 0 {
+		return false
+	}
+	if exitCode > 0 || exitCode == 137 {
 		return true
 	}
+
+	if strings.Contains(status, "oom") || strings.Contains(status, "dead") || strings.Contains(status, "crash") || strings.Contains(status, "restarting") {
+		return true
+	}
+
 	if c.RAMLimitBytes > 0 && float64(c.RAMBytes)/float64(c.RAMLimitBytes) >= 0.85 {
 		return true
 	}
+
 	return false
 }
 

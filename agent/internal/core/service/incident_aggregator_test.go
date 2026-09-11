@@ -51,8 +51,8 @@ func TestIncidentAggregator_GroupingAndTopology(t *testing.T) {
 	if inc.GroupName != "stack_web" {
 		t.Errorf("expected group name 'stack_web', got %q", inc.GroupName)
 	}
-	if len(inc.Members) != 4 { // c1.Name, c1.ID, c2.Name, c2.ID
-		t.Errorf("expected 4 entries in members map, got %d", len(inc.Members))
+	if len(inc.Members) != 2 { // c1.ID, c2.ID (identidad canónica F4)
+		t.Errorf("expected 2 entries in members map (canonical IDs), got %d", len(inc.Members))
 	}
 
 	// isolated-worker no debe ser miembro

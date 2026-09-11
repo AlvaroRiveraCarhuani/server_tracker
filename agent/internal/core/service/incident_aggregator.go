@@ -161,7 +161,6 @@ func (a *IncidentAggregator) IngestAnomalies(
 		if existingID, ok := a.memberIncident[cleanName]; ok {
 			if inc, found := a.incidents[existingID]; found && !inc.Closed {
 				// Ya es miembro del incidente activo
-				inc.Members[cleanName] = c
 				inc.Members[c.ID] = c
 				continue
 			}
@@ -207,7 +206,6 @@ func (a *IncidentAggregator) IngestAnomalies(
 
 			if canAdjoin {
 				// Adjuntar al incidente
-				inc.Members[cleanName] = c
 				inc.Members[c.ID] = c
 				a.memberIncident[cleanName] = inc.ID
 				a.memberIncident[c.ID] = inc.ID
@@ -269,7 +267,6 @@ func (a *IncidentAggregator) IngestAnomalies(
 
 		for _, c := range comp {
 			cleanName := strings.TrimPrefix(c.Name, "/")
-			inc.Members[cleanName] = c
 			inc.Members[c.ID] = c
 			a.memberIncident[cleanName] = incID
 			a.memberIncident[c.ID] = incID
@@ -311,9 +308,11 @@ func (a *IncidentAggregator) CheckQuietPeriods(now time.Time) (closing []*Incide
 		if now.After(inc.QuietUntil) || now.Equal(inc.QuietUntil) {
 			// Período quieto finalizado: cerrar incidente
 			inc.Closed = true
-			for name := range inc.Members {
-				delete(a.memberIncident, name)
-				clean := strings.TrimPrefix(name, "/")
+			for id, m := range inc.Members {
+				delete(a.memberIncident, id)
+				clean := strings.TrimPrefix(m.Name, "/")
+				delete(a.memberIncident, clean)
+				delete(a.recentEvents, id)
 				delete(a.recentEvents, clean)
 			}
 			closing = append(closing, inc)
@@ -332,12 +331,19 @@ func (a *IncidentAggregator) SetManualOrigin(incidentID, containerName string) b
 		return false
 	}
 	clean := strings.TrimPrefix(containerName, "/")
-	if _, isMember := inc.Members[clean]; !isMember {
-		if _, isMemberID := inc.Members[containerName]; !isMemberID {
-			return false
+	found := false
+	var targetName string
+	for id, m := range inc.Members {
+		if id == containerName || strings.TrimPrefix(m.Name, "/") == clean {
+			found = true
+			targetName = strings.TrimPrefix(m.Name, "/")
+			break
 		}
 	}
-	inc.ManualOrigin = clean
+	if !found {
+		return false
+	}
+	inc.ManualOrigin = targetName
 	return true
 }
 
@@ -422,8 +428,11 @@ func (a *IncidentAggregator) recomputeIncident(inc *Incident, graph *DependencyG
 func (a *IncidentAggregator) RuleBasedIncidentDiagnosis(inc *Incident, graph *DependencyGraph) domain.DiagnosisResult {
 	originName := inc.EffectiveOrigin()
 	var originMetric domain.ContainerMetric
-	if m, ok := inc.Members[originName]; ok {
-		originMetric = m
+	for id, m := range inc.Members {
+		if id == originName || strings.TrimPrefix(m.Name, "/") == originName {
+			originMetric = m
+			break
+		}
 	}
 
 	exitCode := domain.ParseExitCode(originMetric.Status)
@@ -645,8 +654,32 @@ func extractAnomalyReason(c domain.ContainerMetric) string {
 	if strings.Contains(strings.ToLower(c.Status), "502") {
 		return "502"
 	}
-	if strings.ToLower(c.Status) == "created" || strings.ToLower(c.Status) == "dead" {
+	if strings.ToLower(c.Status) == "dead" {
 		return c.Status
 	}
 	return "crash"
+}
+
+// CountHealthyPeers cuenta los contenedores del mismo grupo topológico que no presentan anomalías (F4).
+func CountHealthyPeers(groupName string, allMetrics []domain.ContainerMetric) int {
+	if groupName == "" {
+		return 0
+	}
+	count := 0
+	for _, c := range allMetrics {
+		if domain.IsAnomalous(c) {
+			continue
+		}
+		if c.ComposeProject == groupName {
+			count++
+			continue
+		}
+		for _, net := range c.Networks {
+			if net == groupName {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }

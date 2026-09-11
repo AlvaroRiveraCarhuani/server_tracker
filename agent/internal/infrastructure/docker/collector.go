@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
@@ -81,6 +83,7 @@ type containerPrevState struct {
 // DockerCollector implementa ports.CollectorPort interactuando con el socket Unix nativo.
 type DockerCollector struct {
 	cli        *client.Client
+	mu         sync.Mutex
 	prevStates map[string]containerPrevState
 }
 
@@ -239,6 +242,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 		rxTot, txTot := CalculateNetworkTotals(&stats)
 
 		var egressSec, ingressSec float64
+		d.mu.Lock()
 		if prev, ok := d.prevStates[c.ID]; ok {
 			elapsed := now.Sub(prev.timestamp).Seconds()
 			if elapsed > 0 {
@@ -256,6 +260,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 			rxBytes:   rxTot,
 			timestamp: now,
 		}
+		d.mu.Unlock()
 
 		metrics = append(metrics, domain.ContainerMetric{
 			ID:                  c.ID[:12],
@@ -272,13 +277,13 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]domain.ContainerMetric
 			RestartCount:        restartCount,
 			RestartPolicy:       restartPolicy,
 			LastStateChange:     lastChange,
-			Networks:            networksList,
-			Ports:               portsList,
-			EnvVars:             envVars,
+			Networks:            slices.Clone(networksList),
+			Ports:               slices.Clone(portsList),
+			EnvVars:             slices.Clone(envVars),
 			ComposeProject:      composeProj,
 			VolumeCount:         volumeCount,
 			IPAddress:           ipAddress,
-			NetworkAliases:      networkAliases,
+			NetworkAliases:      slices.Clone(networkAliases),
 			Timestamp:           now,
 		})
 	}

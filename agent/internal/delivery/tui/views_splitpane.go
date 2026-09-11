@@ -95,9 +95,19 @@ func overlayModal(bg, modal string, width, height int) string {
 func (m Model) viewTable() string {
 	var b strings.Builder
 
-	// Header superior con Branding de SOLV
+	// Header superior con Branding de SOLV y afijo [?] fijo a la derecha (F5)
 	branding := StyleSolvBranding.Render("SOLV") + lipgloss.NewStyle().Foreground(ColorSubtext0).Render(" :: OPERATOR WORKSPACE")
-	b.WriteString(branding + "\n")
+	helpAffix := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("[?]")
+	headerW := max(m.width, 80)
+	spLen := max(1, headerW-lipgloss.Width(branding)-lipgloss.Width(helpAffix))
+	header := branding + strings.Repeat(" ", spLen) + helpAffix
+	b.WriteString(header + "\n")
+
+	// Toast de primera ejecución (duración 5s o hasta primera tecla) (F5)
+	if m.toastVisible && !m.themeConfig.OnboardingHintShown && time.Now().Before(m.toastExpiry) {
+		toastLine := lipgloss.NewStyle().Foreground(ColorPeach).Render("  · pulsa ? para ver atajos\n")
+		b.WriteString(toastLine)
+	}
 
 	if m.lastError != "" {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorRed).Render(fmt.Sprintf("[ERROR] %s\n", m.lastError)))
@@ -657,10 +667,8 @@ func (m Model) viewTable() string {
 			if m.aiMeter != nil {
 				sessionStr = m.aiMeter.FormatStatusBar()
 			}
-			modeTokenWithSession := fmt.Sprintf("%s · %s", modeToken, sessionStr)
-
-			shortcuts := fmt.Sprintf("%s  |  [j/k]: Navegar  |  [p]: Fijar  |  [l/Enter]: Logs  |  [c]: IA  |  [t]: Preferencias  |  [/]: Filtro%s", modeTokenWithSession, filterTag)
-			b.WriteString(StyleStatusBar.Render(shortcuts))
+			modeTokenWithSession := fmt.Sprintf("%s · %s%s", modeToken, sessionStr, filterTag)
+			b.WriteString(StyleStatusBar.Render(modeTokenWithSession))
 		}
 	}
 
