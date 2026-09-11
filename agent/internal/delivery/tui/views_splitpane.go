@@ -499,11 +499,46 @@ func (m Model) viewTable() string {
 			// En modo MANUAL, si el banner es [RULE] o [SIG], agregar hint explícito para inferir con IA
 			manualHint := ""
 			if m.aiConfig.SelectionMode == domain.SelectionManual && (!hasRes || res.Level == domain.LevelRule || res.Level == domain.LevelSignal) {
-				manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(" · [i] solicitar diagnóstico IA")
+				if m.width <= 90 {
+					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(" · [i] IA")
+				} else {
+					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(" · [i] solicitar diagnóstico IA")
+				}
 			}
 
-			bannerContent := fmt.Sprintf("%s %s%s%s", tagStyled, diagText, manualHint, usageBadge)
-			b.WriteString(StyleAIOpsBanner.Width(max(40, m.width-8)).Render(bannerContent) + "\n")
+			detailHint := ""
+			if hasRes && res.RecurrenceCount >= 3 {
+				detailHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(" · [d] detalle")
+			}
+
+			bannerWidth := max(40, m.width-2)
+			rawBannerLen := lipgloss.Width(tagStyled) + 1 + lipgloss.Width(diagText) + lipgloss.Width(manualHint) + lipgloss.Width(detailHint) + lipgloss.Width(usageBadge)
+			if rawBannerLen > bannerWidth {
+				if hasRes && res.RecurrenceCount >= 3 {
+					recTag := fmt.Sprintf("recurrente (%d/1h)", res.RecurrenceCount)
+					if strings.Contains(diagText, recTag) {
+						baseText := strings.TrimSpace(strings.Replace(diagText, recTag, "", 1))
+						availForBase := bannerWidth - lipgloss.Width(tagStyled) - 1 - lipgloss.Width(recTag) - 1 - lipgloss.Width(detailHint) - lipgloss.Width(manualHint) - lipgloss.Width(usageBadge) - 3
+						if availForBase > 5 {
+							baseText = truncate(baseText, availForBase)
+							diagText = fmt.Sprintf("%s %s", baseText, recTag)
+						}
+					} else {
+						avail := bannerWidth - lipgloss.Width(tagStyled) - lipgloss.Width(manualHint) - lipgloss.Width(detailHint) - lipgloss.Width(usageBadge) - 3
+						if avail > 10 {
+							diagText = truncate(diagText, avail)
+						}
+					}
+				} else {
+					avail := bannerWidth - lipgloss.Width(tagStyled) - lipgloss.Width(manualHint) - lipgloss.Width(detailHint) - lipgloss.Width(usageBadge) - 3
+					if avail > 10 {
+						diagText = truncate(diagText, avail)
+					}
+				}
+			}
+
+			bannerContent := fmt.Sprintf("%s %s%s%s%s", tagStyled, diagText, detailHint, manualHint, usageBadge)
+			b.WriteString(StyleAIOpsBanner.Width(bannerWidth).Render(bannerContent) + "\n")
 		}
 	}
 

@@ -2,10 +2,16 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -1811,5 +1817,413 @@ func TestTUI_Ola3_Criterio7_ZeroRCE_ReadOnly(t *testing.T) {
 		t.Fatalf("V5 must NOT transition to remediation confirmation")
 	}
 }
+
+// ============================================================================
+// OLA 4: MEMORIA DEL SISTEMA (CONTEXTO TEMPORAL) — TESTS DE ACEPTACIÓN
+// ============================================================================
+
+// Criterio 1: Umbral exacto (2 crashes OOM -> banner SIN tag; 3er crash -> muestra "(3/1h)" sin abrir V4)
+func TestTUI_Ola4_Criterio1_UmbralExacto(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+
+	// 1. Crash 1 (hace 30m)
+	c1 := domain.ContainerMetric{
+		ID:              "c-oom",
+		Name:            "worker-app",
+		Status:          "Exited (137) 30 minutes ago",
+		LastStateChange: time.Now().Add(-30 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c1}
+	m.cursor = 0
+	if cmd := m.triggerTriageIfAnomalous(c1); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	view1 := m.View()
+	if strings.Contains(view1, "recurrente") || strings.Contains(view1, "(1/1h)") {
+		t.Errorf("1st crash must NOT be tagged as recurrent, got:\n%s", view1)
+	}
+
+	// 2. Crash 2 (hace 15m)
+	c2 := domain.ContainerMetric{
+		ID:              "c-oom",
+		Name:            "worker-app",
+		Status:          "Exited (137) 15 minutes ago",
+		LastStateChange: time.Now().Add(-15 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c2}
+	if cmd := m.triggerTriageIfAnomalous(c2); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	view2 := m.View()
+	if strings.Contains(view2, "recurrente") || strings.Contains(view2, "(2/1h)") {
+		t.Errorf("2nd crash must NOT be tagged as recurrent, got:\n%s", view2)
+	}
+
+	// 3. Crash 3 (hace 2m) -> Dispara recurrencia
+	c3 := domain.ContainerMetric{
+		ID:              "c-oom",
+		Name:            "worker-app",
+		Status:          "Exited (137) 2 minutes ago",
+		LastStateChange: time.Now().Add(-2 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c3}
+	if cmd := m.triggerTriageIfAnomalous(c3); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	view3 := m.View()
+	if !strings.Contains(view3, "recurrente (3/1h)") {
+		t.Errorf("3rd crash MUST display 'recurrente (3/1h)', got:\n%s", view3)
+	}
+	if m.activeState != stateFleetTable {
+		t.Errorf("expected activeState to remain stateFleetTable without opening V4, got %v", m.activeState)
+	}
+}
+
+// Criterio 2: V4 del tercer crash muestra las tres líneas de historial
+func TestTUI_Ola4_Criterio2_V4TresLineasHistorial(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+
+	// Simular 3 crashes en el journal con diagnósticos previos y métricas de RAM
+	c1 := domain.ContainerMetric{
+		ID:              "c-hist",
+		Name:            "api-service",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-25 * time.Minute),
+	}
+	c2 := domain.ContainerMetric{
+		ID:              "c-hist",
+		Name:            "api-service",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-15 * time.Minute),
+	}
+	c3 := domain.ContainerMetric{
+		ID:              "c-hist",
+		Name:            "api-service",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-2 * time.Minute),
+	}
+
+	m.metrics = []domain.ContainerMetric{c3}
+	m.cursor = 0
+
+	// Tendencia RAM creciente sostenida
+	m.metricsHistory["c-hist"] = &MetricHistory{
+		RAM: []float64{100, 100, 150, 150, 200, 200},
+	}
+
+	// Registrar los 3 crashes
+	if cmd := m.triggerTriageIfAnomalous(c1); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+	if cmd := m.triggerTriageIfAnomalous(c2); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+	if cmd := m.triggerTriageIfAnomalous(c3); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	// Abrir V4
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = newModel.(Model)
+
+	v4View := m.View()
+
+	// 1. Línea de conteo + homogeneidad + recencia
+	if !strings.Contains(v4View, "historial: 3 crashes en 1h (todos OOM)") {
+		t.Errorf("expected V4 to display 'historial: 3 crashes en 1h (todos OOM)', got:\n%s", v4View)
+	}
+
+	// 2. Línea de hipótesis previa
+	if !strings.Contains(v4View, "hipótesis previa:") {
+		t.Errorf("expected V4 to display 'hipótesis previa:', got:\n%s", v4View)
+	}
+
+	// 3. Línea de tendencia RAM
+	if !strings.Contains(v4View, "tendencia RAM: creciente sostenida") {
+		t.Errorf("expected V4 to display 'tendencia RAM: creciente sostenida', got:\n%s", v4View)
+	}
+}
+
+// Criterio 3: Con IA activa, prompt capturado incluye bloque y salvaguarda solo desde el 2º crash
+func TestTUI_Ola4_Criterio3_PromptHistorialIA(t *testing.T) {
+	var capturedPrompts []string
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+		if msgs, ok := reqBody["messages"].([]interface{}); ok {
+			for _, msg := range msgs {
+				if mObj, ok := msg.(map[string]interface{}); ok {
+					if mObj["role"] == "user" {
+						capturedPrompts = append(capturedPrompts, fmt.Sprint(mObj["content"]))
+					}
+				}
+			}
+		}
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{"message": map[string]string{"content": "[OOMKilled -> Incrementar límites de memoria]"}},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	cfg := domain.DefaultAIConfig()
+	cfg.ActiveProvider = domain.ProviderOpenRouter
+	p := cfg.Providers[domain.ProviderOpenRouter]
+	p.APIKey = "test-key"
+	p.Endpoint = mockServer.URL
+	cfg.Providers[domain.ProviderOpenRouter] = p
+
+	client := ai.NewTriageClientWithConfig(cfg)
+	client.SetCatalogService(ai.NewCatalogService(t.TempDir() + "/cat.json"))
+
+	m := NewModel(nil)
+	m.triageClient = client
+	client.SetCrashJournal(m.crashJournal)
+
+	// Crash 1: primer crash
+	c1 := domain.ContainerMetric{
+		ID:              "c-ia",
+		Name:            "ia-service",
+		Status:          "Exited (137) just now",
+		LastStateChange: time.Now().Add(-10 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c1}
+	m.cursor = 0
+
+	cmd1 := m.triggerTriageForced(c1)
+	if cmd1 != nil {
+		msg := cmd1()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	if len(capturedPrompts) < 1 {
+		t.Fatalf("expected 1 prompt to be captured")
+	}
+	prompt1 := capturedPrompts[0]
+	// En el primer crash NO debe incluir el bloque de historial
+	if strings.Contains(prompt1, "Historial reciente:") {
+		t.Errorf("1st crash prompt must NOT contain 'Historial reciente:', got:\n%s", prompt1)
+	}
+	if strings.Contains(prompt1, "INSTRUCCIÓN: la hipótesis previa es hipótesis") {
+		t.Errorf("1st crash prompt must NOT contain instruction guard, got:\n%s", prompt1)
+	}
+
+	// Crash 2: segundo crash
+	c2 := domain.ContainerMetric{
+		ID:              "c-ia",
+		Name:            "ia-service",
+		Status:          "Exited (137) 1m ago",
+		LastStateChange: time.Now().Add(-1 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c2}
+
+	cmd2 := m.triggerTriageForced(c2)
+	if cmd2 != nil {
+		msg := cmd2()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	if len(capturedPrompts) < 2 {
+		t.Fatalf("expected 2 prompts to be captured")
+	}
+	prompt2 := capturedPrompts[1]
+	// En el segundo crash SÍ debe incluir el bloque de historial y la guardia
+	if !strings.Contains(prompt2, "Historial reciente:") {
+		t.Errorf("2nd crash prompt MUST contain 'Historial reciente:', got:\n%s", prompt2)
+	}
+	if !strings.Contains(prompt2, "INSTRUCCIÓN: la hipótesis previa es hipótesis, no verdad. Verifícala contra la evidencia nueva. Descártala si la contradice.") {
+		t.Errorf("2nd crash prompt MUST contain exact instruction guard, got:\n%s", prompt2)
+	}
+}
+
+// Criterio 4: Dedupe (un solo crash real + 10 ticks de refresh produce Count == 1)
+func TestTUI_Ola4_Criterio4_DedupeTicks(t *testing.T) {
+	m := NewModel(nil)
+	changeTime := time.Now().Add(-5 * time.Minute)
+	c := domain.ContainerMetric{
+		ID:              "c-dedupe-test",
+		Name:            "dedupe-app",
+		Status:          "Exited (137)",
+		LastStateChange: changeTime,
+	}
+
+	// Simular 10 ticks de telemetría repetida
+	for i := 0; i < 10; i++ {
+		newModel, _ := m.Update([]domain.ContainerMetric{c})
+		m = newModel.(Model)
+	}
+
+	count := m.crashJournal.Count("c-dedupe-test", "", 1*time.Hour)
+	if count != 1 {
+		t.Fatalf("expected Count == 1 after 10 ticks of identical state, got %d", count)
+	}
+}
+
+// Criterio 5: Volatilidad (reiniciar el agente vacía el journal; primer crash post-reinicio es limpio)
+func TestTUI_Ola4_Criterio5_Volatilidad(t *testing.T) {
+	// Agente previo con 3 crashes
+	m1 := NewModel(nil)
+	c := domain.ContainerMetric{
+		ID:              "c-reset",
+		Name:            "reset-app",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-10 * time.Minute),
+	}
+	m1.crashJournal.Record(c, "diag 1", "RULE")
+	c.LastStateChange = time.Now().Add(-5 * time.Minute)
+	m1.crashJournal.Record(c, "diag 2", "RULE")
+	c.LastStateChange = time.Now().Add(-1 * time.Minute)
+	m1.crashJournal.Record(c, "diag 3", "RULE")
+
+	if m1.crashJournal.Count("c-reset", "", 1*time.Hour) != 3 {
+		t.Fatalf("m1 should have 3 crashes")
+	}
+
+	// Simular reinicio del agente instanciando un nuevo Model
+	m2 := NewModel(nil)
+	m2.width = 120
+	m2.height = 40
+	cFresh := domain.ContainerMetric{
+		ID:              "c-reset",
+		Name:            "reset-app",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now(),
+	}
+	m2.metrics = []domain.ContainerMetric{cFresh}
+	m2.cursor = 0
+
+	if cmd := m2.triggerTriageIfAnomalous(cFresh); cmd != nil {
+		msg := cmd()
+		newModel, _ := m2.Update(msg)
+		m2 = newModel.(Model)
+	}
+
+	view := m2.View()
+	if strings.Contains(view, "recurrente") {
+		t.Errorf("post-restart agent must NOT mark first crash as recurrent, got:\n%s", view)
+	}
+
+	// Abrir V4
+	newModel, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m2 = newModel.(Model)
+	v4View := m2.View()
+	if strings.Contains(v4View, "hipótesis previa:") {
+		t.Errorf("post-restart V4 must NOT have previous hypothesis, got:\n%s", v4View)
+	}
+}
+
+// Criterio 6: H5 (en OOM recurrente, SuggestedAction sigue siendo restart; nota en V4 y NO en banner)
+func TestTUI_Ola4_Criterio6_H5_SuggestedActionAndNote(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 120
+	m.height = 40
+
+	c := domain.ContainerMetric{
+		ID:              "c-h5",
+		Name:            "h5-app",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-20 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c}
+	m.cursor = 0
+
+	// Registrar 3 crashes OOM
+	m.crashJournal.Record(c, "OOM 1", "RULE")
+	c.LastStateChange = time.Now().Add(-10 * time.Minute)
+	m.crashJournal.Record(c, "OOM 2", "RULE")
+	c.LastStateChange = time.Now().Add(-1 * time.Minute)
+
+	if cmd := m.triggerTriageIfAnomalous(c); cmd != nil {
+		msg := cmd()
+		newModel, _ := m.Update(msg)
+		m = newModel.(Model)
+	}
+
+	res := m.diagnosisResults["c-h5"]
+	// 1. SuggestedAction sigue siendo restart
+	if res.SuggestedAction != "restart" {
+		t.Errorf("expected SuggestedAction to remain 'restart', got: %s", res.SuggestedAction)
+	}
+
+	// 2. Banner NO contiene la nota explicativa
+	bannerView := m.View()
+	if strings.Contains(bannerView, "reiniciar no resolverá la causa raíz") {
+		t.Errorf("banner must NOT contain recurrence note, got:\n%s", bannerView)
+	}
+
+	// 3. V4 SÍ contiene la nota explicativa como segunda línea
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = newModel.(Model)
+	v4View := m.View()
+	if !strings.Contains(v4View, "reiniciar no resolverá la causa raíz") {
+		t.Errorf("V4 MUST contain recurrence note 'reiniciar no resolverá la causa raíz', got:\n%s", v4View)
+	}
+}
+
+// Criterio 7: 80 columnas (banner con recurrencia y root cause largo trunca limpio sin wrap)
+func TestTUI_Ola4_Criterio7_80ColumnasSinWrap(t *testing.T) {
+	m := NewModel(nil)
+	m.width = 80
+	m.height = 24
+
+	longRootCause := "OOMKilled: contenedor superó límite de memoria de forma crítica y extrema en producción tras fuga continua"
+	c := domain.ContainerMetric{
+		ID:              "c-long",
+		Name:            "long-app",
+		Status:          "Exited (137)",
+		LastStateChange: time.Now().Add(-1 * time.Minute),
+	}
+	m.metrics = []domain.ContainerMetric{c}
+	m.cursor = 0
+
+	// Simular resultado recurrente
+	res := domain.DiagnosisResult{
+		Level:           domain.LevelRule,
+		RootCause:       fmt.Sprintf("%s recurrente (3/1h)", longRootCause),
+		SuggestedAction: "restart",
+		RecurrenceCount: 3,
+		RecurrenceNote:  "reiniciar no resolverá la causa raíz",
+	}
+	m.diagnosisResults["c-long"] = res
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		// Verificar que las líneas del banner o tabla no excedan 80 cols
+		if strings.Contains(line, "recurrente") {
+			w := lipgloss.Width(line)
+			if w > 80 {
+				t.Errorf("banner line %d exceeds 80 columns (width=%d):\n%s", i, w, line)
+			}
+			if !strings.Contains(line, "...") {
+				t.Errorf("expected long root cause in banner to be truncated with '...', got:\n%s", line)
+			}
+		}
+	}
+}
+
 
 

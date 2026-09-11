@@ -21,11 +21,18 @@ const (
 	defaultOllamaURL     = "http://localhost:11434/api/chat"
 )
 
+// CrashHistoryProvider provee el bloque de historial reciente para el prompt de IA.
+type CrashHistoryProvider interface {
+	FormatPromptBlock(containerRef string, ramTrend string) string
+}
+
 // TriageClient realiza inferencia para diagnóstico pasivo de contenedores en falla.
 type TriageClient struct {
 	config         domain.AIConfig
 	client         *http.Client
 	catalogService *CatalogService
+	crashJournal   CrashHistoryProvider
+	ramTrendFunc   func(containerName string) string
 }
 
 // NewTriageClient inicializa el cliente con credenciales del entorno.
@@ -61,6 +68,14 @@ func NewTriageClientWithConfig(cfg domain.AIConfig) *TriageClient {
 // SetCatalogService vincula el servicio de catálogo para registrar métricas observadas y resolver modo Auto.
 func (c *TriageClient) SetCatalogService(cs *CatalogService) {
 	c.catalogService = cs
+}
+
+// SetCrashJournal vincula el proveedor de historial de fallas y función de tendencia RAM para enriquecer el prompt.
+func (c *TriageClient) SetCrashJournal(journal CrashHistoryProvider, ramTrendFunc ...func(string) string) {
+	c.crashJournal = journal
+	if len(ramTrendFunc) > 0 {
+		c.ramTrendFunc = ramTrendFunc[0]
+	}
 }
 
 // SetConfig actualiza la configuración de IA en caliente.
@@ -179,6 +194,15 @@ func (c *TriageClient) DiagnoseContainerWithUsage(ctx context.Context, name, ima
 	}
 
 	userPrompt := fmt.Sprintf("Contenedor: %s | Imagen: %s | Estado: %s\nLogs:\n%s", name, image, status, trimmedLogs)
+	if c.crashJournal != nil {
+		ramTrend := ""
+		if c.ramTrendFunc != nil {
+			ramTrend = c.ramTrendFunc(name)
+		}
+		if histBlock := c.crashJournal.FormatPromptBlock(name, ramTrend); histBlock != "" {
+			userPrompt = fmt.Sprintf("Contenedor: %s | Imagen: %s | Estado: %s\nLogs:\n%s\n\n%s", name, image, status, trimmedLogs, histBlock)
+		}
+	}
 
 	start := time.Now()
 	var diagResult string

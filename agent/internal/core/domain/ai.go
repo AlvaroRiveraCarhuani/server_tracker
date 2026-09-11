@@ -663,6 +663,8 @@ type DiagnosisResult struct {
 	SuggestedAction string         `json:"suggested_action"`
 	RawOutput       string         `json:"raw_output,omitempty"`
 	TokenUsage      TokenUsage     `json:"token_usage,omitempty"`
+	RecurrenceCount int            `json:"recurrence_count,omitempty"`
+	RecurrenceNote  string         `json:"recurrence_note,omitempty"`
 }
 
 func intPtr(i int) *int {

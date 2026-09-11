@@ -129,6 +129,60 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 		}
 	}
 
+	// 7. Evidencia de Historial (Ola 4)
+	if m.crashJournal != nil {
+		count1h := m.crashJournal.Count(c.ID, "", 1*time.Hour)
+		if count1h == 0 && c.Name != "" {
+			count1h = m.crashJournal.Count(c.Name, "", 1*time.Hour)
+		}
+		if count1h > 0 {
+			homog := m.crashJournal.Homogeneity(c.ID, 1*time.Hour)
+			if homog == "" && c.Name != "" {
+				homog = m.crashJournal.Homogeneity(c.Name, 1*time.Hour)
+			}
+			lastEv := m.crashJournal.LastEvent(c.ID)
+			if lastEv == nil && c.Name != "" {
+				lastEv = m.crashJournal.LastEvent(c.Name)
+			}
+			lastAgo := "reciente"
+			if lastEv != nil {
+				lastAgo = formatDurationAgo(time.Since(lastEv.Timestamp))
+			}
+			items = append(items, EvidenceItem{
+				Type:  "historial",
+				Label: "historial",
+				Value: fmt.Sprintf("%d crashes en 1h (%s) · último %s", count1h, homog, lastAgo),
+			})
+
+			prevDiag := m.crashJournal.PreviousDiagnosis(c.ID)
+			if prevDiag == "" && c.Name != "" {
+				prevDiag = m.crashJournal.PreviousDiagnosis(c.Name)
+			}
+			if prevDiag != "" {
+				items = append(items, EvidenceItem{
+					Type:  "historial",
+					Label: "hipótesis previa",
+					Value: prevDiag,
+				})
+			}
+
+			hist := m.metricsHistory[c.ID]
+			if hist == nil && c.Name != "" {
+				hist = m.metricsHistory[c.Name]
+			}
+			if hist != nil && len(hist.RAM) > 0 {
+				trend := hist.CalculateRAMTrend()
+				if trend != "" {
+					items = append(items, EvidenceItem{
+						Type:  "historial",
+						Label: "tendencia RAM",
+						Value: trend,
+					})
+				}
+			}
+		}
+	}
+
 	return items
 }
 
@@ -220,7 +274,12 @@ func (m Model) viewDiagnosisModal() string {
 	}
 
 	diagLine := fmt.Sprintf("%s %s", tagStyled, lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(rootCause))
-	lines = append(lines, diagLine, "")
+	lines = append(lines, diagLine)
+	if res.RecurrenceNote != "" {
+		noteStyled := lipgloss.NewStyle().Foreground(ColorPeach).Render(fmt.Sprintf("  %s", res.RecurrenceNote))
+		lines = append(lines, noteStyled)
+	}
+	lines = append(lines, "")
 
 	// 2. Sección de Evidencia Tipada
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render("evidencia:"))

@@ -109,6 +109,47 @@ func (h *MetricHistory) CalculateCPUTrend() TrendVector {
 	}
 }
 
+// CalculateRAMTrend compara el tercio inicial vs el tercio final del ring de muestras con umbral ±20%.
+func (h *MetricHistory) CalculateRAMTrend() string {
+	n := len(h.RAM)
+	if n < 3 {
+		return "estable"
+	}
+
+	third := n / 3
+	if third < 1 {
+		third = 1
+	}
+
+	var sumInitial float64
+	for i := 0; i < third; i++ {
+		sumInitial += h.RAM[i]
+	}
+	avgInitial := sumInitial / float64(third)
+
+	var sumFinal float64
+	for i := n - third; i < n; i++ {
+		sumFinal += h.RAM[i]
+	}
+	avgFinal := sumFinal / float64(third)
+
+	if avgInitial <= 0 {
+		if avgFinal > 0 {
+			return "creciente sostenida"
+		}
+		return "estable"
+	}
+
+	ratio := (avgFinal - avgInitial) / avgInitial
+	if ratio >= 0.20 {
+		return "creciente sostenida"
+	} else if ratio <= -0.20 {
+		return "decreciente"
+	}
+
+	return "estable"
+}
+
 // RenderGradientBar dibuja una barra proporcional con gradiente térmico posicional estilo btop.
 // Segmentos: 0-60% verde, 60-80% durazno/amarillo, 80-100% rojo. Inactivo: ░ tenue con contraste garantizado.
 func RenderGradientBar(current, limit float64, width int) string {

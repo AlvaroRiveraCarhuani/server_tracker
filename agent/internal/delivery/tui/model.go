@@ -25,6 +25,7 @@ type Model struct {
 	vaultService       ports.VaultPort
 	triageClient       TriageService
 	ruleEngine         *service.RuleEngine
+	crashJournal       *service.CrashJournal
 	diagnosisResults   map[string]domain.DiagnosisResult
 	diagnosisCache     map[string]string
 	lastDiagnosisUsage map[string]domain.TokenUsage
@@ -159,8 +160,10 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	} else {
 		triageClient = ai.NewTriageClient()
 	}
+	journal := service.NewCrashJournal()
 	if tc, ok := triageClient.(*ai.TriageClient); ok {
 		tc.SetCatalogService(catSvc)
+		tc.SetCrashJournal(journal)
 	}
 
 	themeCursor := 0
@@ -187,6 +190,7 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		vaultService:         vaultSvc,
 		triageClient:         triageClient,
 		ruleEngine:           service.NewRuleEngine(),
+		crashJournal:         journal,
 		catalogService:       catSvc,
 		diagnosisResults:     make(map[string]domain.DiagnosisResult),
 		diagnosisCache:       make(map[string]string),
@@ -372,6 +376,7 @@ func (m Model) triggerTriage(c domain.ContainerMetric, forceAI bool) tea.Cmd {
 			defer cancel()
 
 			uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient, m.ruleEngine)
+			uc.SetCrashJournal(m.crashJournal)
 			res := uc.ExecuteWithCascade(ctx, c, false, domain.SelectionManual)
 
 			return diagnosisResultMsg{
@@ -397,6 +402,7 @@ func (m Model) triggerTriage(c domain.ContainerMetric, forceAI bool) tea.Cmd {
 		defer cancel()
 
 		uc := usecases.NewDiagnoseContainerUseCase(m.collector, m.triageClient, m.ruleEngine)
+		uc.SetCrashJournal(m.crashJournal)
 		res := uc.ExecuteWithCascade(ctx, c, forceAI, m.aiConfig.SelectionMode)
 
 		return diagnosisResultMsg{

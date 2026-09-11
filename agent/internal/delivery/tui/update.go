@@ -776,6 +776,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diagnosisResults = make(map[string]domain.DiagnosisResult)
 		}
 		m.diagnosisResults[msg.containerID] = msg.result
+		if m.crashJournal != nil {
+			m.crashJournal.UpdateDiagnosis(msg.containerID, msg.diagnosis, string(msg.result.Level))
+		}
 		m.lastDiagnosisUsage[msg.containerID] = msg.usage
 		if msg.usage.TotalTokens > 0 {
 			m.sessionTokensUsed += msg.usage.TotalTokens
@@ -819,6 +822,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			ramMB := float64(c.RAMBytes) / (1024 * 1024)
 			hist.AddSample(c.CPUPercent, ramMB)
+
+			if m.isAnomalous(c) && m.crashJournal != nil {
+				m.crashJournal.Record(c, "", "")
+			}
 		}
 		for id := range m.metricsHistory {
 			if !activeIDs[id] {
