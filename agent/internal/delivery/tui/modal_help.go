@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -55,7 +56,7 @@ func (m Model) viewHelp() string {
 
 	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
 	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
-	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render("Atajos de teclado")
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(i18n.T(m.language, "help.title"))
 	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
 	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
 

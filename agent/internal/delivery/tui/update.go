@@ -8,6 +8,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -195,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "down", "j":
-				if m.preferencesCursor < 1 {
+				if m.preferencesCursor < 2 {
 					m.preferencesCursor++
 				}
 				return m, nil
@@ -222,6 +223,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				}
+				if m.preferencesCursor == 2 {
+					if m.language == i18n.LangES {
+						m.language = i18n.LangEN
+					} else {
+						m.language = i18n.LangES
+					}
+					if m.vaultService != nil {
+						_ = m.vaultService.SaveLanguage(string(m.language))
+					}
+					if m.triageClient != nil {
+						m.triageClient.SetLanguage(string(m.language))
+					}
+					return m, nil
+				}
+				return m, nil
+			}
+
+		case stateLanguageOverlay:
+			switch msg.String() {
+			case "up", "k":
+				if m.langOverlayCursor > 0 {
+					m.langOverlayCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.langOverlayCursor < 1 {
+					m.langOverlayCursor++
+				}
+				return m, nil
+			case "enter", "esc":
+				chosen := i18n.LangES
+				if m.langOverlayCursor == 1 {
+					chosen = i18n.LangEN
+				}
+				m.language = chosen
+				if m.vaultService != nil {
+					_ = m.vaultService.SaveLanguage(string(chosen))
+				}
+				if m.triageClient != nil {
+					m.triageClient.SetLanguage(string(chosen))
+				}
+				m.activeState = stateFleetTable
+				m.toastVisible = !m.themeConfig.OnboardingHintShown
+				m.toastExpiry = time.Now().Add(5 * time.Second)
 				return m, nil
 			}
 
@@ -381,9 +426,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.v4ActionCursor > 0 {
 						m.v4ActionCursor--
 					}
-					if m.overlayScrollOffset > 0 {
-						m.overlayScrollOffset--
-					}
 				}
 				return m, nil
 
@@ -396,7 +438,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(actions) > 0 && m.v4ActionCursor < len(actions)-1 {
 						m.v4ActionCursor++
 					}
-					m.overlayScrollOffset++
 				}
 				return m, nil
 

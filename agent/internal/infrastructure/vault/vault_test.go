@@ -1,6 +1,7 @@
 package vault_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -245,5 +246,46 @@ func TestVault_PinnedContainersPersistence(t *testing.T) {
 
 	if len(got) != 3 || got[0] != "solv_db" || got[1] != "server_tracker_traefik" || got[2] != "redis_cache" {
 		t.Errorf("PinnedContainers recuperados incorrectos: %+v", got)
+	}
+}
+
+func TestVault_LanguagePersistence(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_lang_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	passphrase := "lang_test_key_123"
+
+	v := vault.NewFileVault(filePath, passphrase)
+
+	// Inicialmente no configurado
+	_, err = v.GetLanguage()
+	if !errors.Is(err, vault.ErrCredentialsNotFound) {
+		t.Fatalf("se esperaba ErrCredentialsNotFound cuando no hay idioma, se obtuvo: %v", err)
+	}
+
+	// Guardar idioma
+	if err := v.SaveLanguage("es"); err != nil {
+		t.Fatalf("error guardando Language: %v", err)
+	}
+
+	got, err := v.GetLanguage()
+	if err != nil {
+		t.Fatalf("error recuperando Language: %v", err)
+	}
+	if got != "es" {
+		t.Errorf("esperado 'es', obtenido: %s", got)
+	}
+
+	// Cambiar a en
+	if err := v.SaveLanguage("en"); err != nil {
+		t.Fatalf("error actualizando Language: %v", err)
+	}
+	got, _ = v.GetLanguage()
+	if got != "en" {
+		t.Errorf("esperado 'en', obtenido: %s", got)
 	}
 }

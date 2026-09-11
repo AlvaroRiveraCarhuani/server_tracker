@@ -62,6 +62,12 @@ func (m *mockTriagePort) DiagnoseContainerWithSlot(ctx context.Context, name, im
 	return m.DiagnoseContainerWithUsage(ctx, name, image, status, logs)
 }
 
+func (m *mockTriagePort) DiagnoseIncident(ctx context.Context, incidentPrompt string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+	return "", domain.TokenUsage{}
+}
+
+func (m *mockTriagePort) SetLanguage(lang string) {}
+
 func TestDiagnoseContainerUseCase_Success(t *testing.T) {
 	collector := &mockCollectorPort{
 		getContainerLogsFn: func(ctx context.Context, containerID string, tail int) (string, error) {

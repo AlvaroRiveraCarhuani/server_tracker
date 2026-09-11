@@ -11,6 +11,7 @@ import (
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/ports"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/usecases"
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -96,6 +97,8 @@ type Model struct {
 	toastExpiry         time.Time
 	v4FocusSection      int 
 	v4EvidenceScroll    int 
+	language            i18n.Language
+	langOverlayCursor   int // 0: español, 1: english
 }
 
 // NewModel inicializa el modelo de la TUI con soporte de bóveda para AIOps.
@@ -209,6 +212,32 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 
 	ruleEng := service.NewRuleEngine()
 
+	activeLang := i18n.LangES
+	firstRunLang := false
+	suggestedCursor := 0 // 0: español, 1: english
+
+	envLang := strings.ToLower(os.Getenv("LANG"))
+	if strings.Contains(envLang, "en") {
+		suggestedCursor = 1
+	}
+
+	if vaultSvc != nil {
+		if storedLang, err := vaultSvc.GetLanguage(); err == nil && storedLang != "" {
+			activeLang = i18n.NormalizeLanguage(storedLang)
+		} else {
+			firstRunLang = true
+		}
+	}
+
+	initState := stateFleetTable
+	if firstRunLang {
+		initState = stateLanguageOverlay
+	}
+
+	if triageClient != nil {
+		triageClient.SetLanguage(string(activeLang))
+	}
+
 	return Model{
 		collector:            collector,
 		vaultService:         vaultSvc,
@@ -224,7 +253,7 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		metricsHistory:       make(map[string]*MetricHistory),
 		pinnedContainers:     pinnedMap,
 		cursor:               0,
-		activeState:          stateFleetTable,
+		activeState:          initState,
 		filterInput:          ti,
 		aiState:              aiViewPolicy,
 		aiPolicyCursor:       0,
@@ -246,8 +275,10 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		width:                100,
 		height:               24,
 		overlayScrollOffset:  0,
-		toastVisible:         !themeCfg.OnboardingHintShown,
+		toastVisible:         !firstRunLang && !themeCfg.OnboardingHintShown,
 		toastExpiry:          time.Now().Add(5 * time.Second),
+		language:             activeLang,
+		langOverlayCursor:    suggestedCursor,
 	}
 }
 

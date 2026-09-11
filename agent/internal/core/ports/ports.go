@@ -25,6 +25,8 @@ type VaultPort interface {
 	GetThemeConfig() (domain.ThemeConfig, error)
 	SavePinnedContainers(names []string) error
 	GetPinnedContainers() ([]string, error)
+	SaveLanguage(lang string) error
+	GetLanguage() (string, error)
 }
 
 
@@ -46,4 +48,6 @@ type TriagePort interface {
 	DiagnoseContainer(ctx context.Context, name, image, status, logs string) string
 	DiagnoseContainerWithUsage(ctx context.Context, name, image, status, logs string) (string, domain.TokenUsage)
 	DiagnoseContainerWithSlot(ctx context.Context, name, image, status, logs string, slot domain.DiagnosisSlot) (string, domain.TokenUsage)
+	DiagnoseIncident(ctx context.Context, incidentPrompt string, slot domain.DiagnosisSlot) (string, domain.TokenUsage)
+	SetLanguage(lang string)
 }

@@ -33,6 +33,21 @@ type TriageClient struct {
 	catalogService *CatalogService
 	crashJournal   CrashHistoryProvider
 	ramTrendFunc   func(containerName string) string
+	language       string
+}
+
+// SetLanguage actualiza el idioma para la directiva de respuesta de la IA (Ola 8).
+func (c *TriageClient) SetLanguage(lang string) {
+	c.language = lang
+}
+
+// GetLanguageDirective devuelve la directiva técnica al modelo según el idioma activo (C3).
+func (c *TriageClient) GetLanguageDirective() string {
+	clean := strings.ToLower(strings.TrimSpace(c.language))
+	if clean == "en" {
+		return "Response language: English. Keep standard technical terms (OOMKilled, exit code, throttling) in their original form."
+	}
+	return "Idioma de respuesta: español. Usa términos técnicos estándar (OOMKilled, exit code, throttling) en su forma original."
 }
 
 // NewTriageClient inicializa el cliente con credenciales del entorno.
@@ -217,7 +232,8 @@ func (c *TriageClient) DiagnoseContainerWithSlot(ctx context.Context, name, imag
 		`  "suggested_action": "restart" | "stop" | "isolate" | "none",` + "\n" +
 		`  "confidence": "high" | "medium" | "low"` + "\n" +
 		"}\n" +
-		"Responde SOLO el objeto JSON, sin prosa previa ni posterior, sin bloques de código markdown."
+		"Responde SOLO el objeto JSON, sin prosa previa ni posterior, sin bloques de código markdown.\n" +
+		c.GetLanguageDirective()
 
 	// Limitar logs a últimas 1200 runas para no gastar cuota innecesaria
 	trimmedLogs := logs
@@ -347,7 +363,8 @@ func (c *TriageClient) DiagnoseIncident(ctx context.Context, incidentPrompt stri
 		`  "origin_container": "<nombre del contenedor de origen>",` + "\n" +
 		`  "cascade": ["<origen>", "<afectado1>", "<afectado2>"]` + "\n" +
 		"}\n" +
-		"Responde SOLO el objeto JSON, sin prosa previa ni posterior, sin bloques de código markdown."
+		"Responde SOLO el objeto JSON, sin prosa previa ni posterior, sin bloques de código markdown.\n" +
+		c.GetLanguageDirective()
 
 	start := time.Now()
 	var diagResult string

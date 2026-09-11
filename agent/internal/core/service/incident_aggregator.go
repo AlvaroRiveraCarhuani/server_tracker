@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 )
 
 // IncidentEvent registra un evento anómalo dentro del timeline del incidente.
@@ -461,7 +462,7 @@ func (a *IncidentAggregator) RuleBasedIncidentDiagnosis(inc *Incident, graph *De
 }
 
 // FormatIncidentBanner formatea la línea del banner para el incidente respetando I7 e I8.
-func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, width int) string {
+func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, width int, lang ...string) string {
 	var tagStyled string
 	if inc.Diagnosis.Level == domain.LevelAI {
 		tagStyled = "[AI]"
@@ -471,9 +472,14 @@ func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, wid
 		tagStyled = "[RULE]"
 	}
 
+	activeLang := i18n.LangES
+	if len(lang) > 0 && lang[0] != "" {
+		activeLang = i18n.NormalizeLanguage(lang[0])
+	}
+
 	group := inc.GroupName
 	if group == "" {
-		group = "incidente"
+		group = i18n.T(activeLang, "incident.default_group")
 	}
 
 	// Conteo de cascada: total miembros menos el origen
@@ -489,7 +495,7 @@ func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, wid
 	}
 
 	originName := inc.EffectiveOrigin()
-	reason := "fallo"
+	reason := i18n.T(activeLang, "incident.reason_default")
 	if ev := findEventFor(inc, originName); ev != nil && ev.Reason != "" {
 		reason = ev.Reason
 	}
@@ -497,7 +503,13 @@ func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, wid
 	var content string
 	switch inc.OriginConfidence {
 	case domain.ConfidenceConfirmed:
-		content = fmt.Sprintf("[INC] %s · origen %s (%s) -> %d · %s · [d]", group, originName, reason, affectedCount, tagStyled)
+		content = i18n.T(activeLang, "incident.confirmed", map[string]interface{}{
+			"group":  group,
+			"origin": originName,
+			"reason": reason,
+			"count":  affectedCount,
+			"tag":    tagStyled,
+		})
 
 	case domain.ConfidenceProbable:
 		if policy == domain.BannerPolicyPrudente {
@@ -505,10 +517,19 @@ func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, wid
 			if totalAnom < 2 {
 				totalAnom = countUniqueMembers(inc.Members)
 			}
-			content = fmt.Sprintf("[INC] %s · %d anómalos · %s · [d]", group, totalAnom, tagStyled)
+			content = i18n.T(activeLang, "incident.probable_prud", map[string]interface{}{
+				"group": group,
+				"count": totalAnom,
+				"tag":   tagStyled,
+			})
 		} else {
 			// Informativo (default)
-			content = fmt.Sprintf("[INC] %s · origen prob. %s -> %d · %s · [d]", group, originName, affectedCount, tagStyled)
+			content = i18n.T(activeLang, "incident.probable_info", map[string]interface{}{
+				"group":  group,
+				"origin": originName,
+				"count":  affectedCount,
+				"tag":    tagStyled,
+			})
 		}
 
 	default: // domain.ConfidenceUndetermined ("s/d")
@@ -516,7 +537,11 @@ func FormatIncidentBanner(inc *Incident, policy domain.IncidentBannerPolicy, wid
 		if totalAnom < 2 {
 			totalAnom = countUniqueMembers(inc.Members)
 		}
-		content = fmt.Sprintf("[INC] %s · %d anómalos · origen s/d · %s · [d]", group, totalAnom, tagStyled)
+		content = i18n.T(activeLang, "incident.undetermined", map[string]interface{}{
+			"group": group,
+			"count": totalAnom,
+			"tag":   tagStyled,
+		})
 	}
 
 	return content

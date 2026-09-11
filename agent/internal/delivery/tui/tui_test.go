@@ -15,7 +15,9 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/ai"
+	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -227,6 +229,12 @@ func (m *mockTriageService) DiagnoseContainerWithSlot(ctx context.Context, name,
 	return m.DiagnoseContainerWithUsage(ctx, name, image, status, logs)
 }
 
+func (m *mockTriageService) DiagnoseIncident(ctx context.Context, incidentPrompt string, slot domain.DiagnosisSlot) (string, domain.TokenUsage) {
+	return "", domain.TokenUsage{}
+}
+
+func (m *mockTriageService) SetLanguage(lang string) {}
+
 func TestTUI_AIOpsZeroPromptTriage(t *testing.T) {
 	metrics := []domain.ContainerMetric{
 		{
@@ -380,6 +388,7 @@ type mockVaultForTUI struct {
 	savedAIConfig    domain.AIConfig
 	savedThemeConfig    domain.ThemeConfig
 	savedPinnedContainers []string
+	savedLanguage    string
 }
 
 func (m *mockVaultForTUI) Save(serverURL, secretToken string) error {
@@ -441,6 +450,18 @@ func (m *mockVaultForTUI) SavePinnedContainers(names []string) error {
 
 func (m *mockVaultForTUI) GetPinnedContainers() ([]string, error) {
 	return m.savedPinnedContainers, nil
+}
+
+func (m *mockVaultForTUI) SaveLanguage(lang string) error {
+	m.savedLanguage = lang
+	return nil
+}
+
+func (m *mockVaultForTUI) GetLanguage() (string, error) {
+	if m.savedLanguage != "" {
+		return m.savedLanguage, nil
+	}
+	return "es", nil
 }
 
 func TestTUI_ConfigModalWorkflow(t *testing.T) {
@@ -3403,6 +3424,170 @@ func TestTUI_Ola7_EvidenciaMiniScrollYTab(t *testing.T) {
 	backMod := m5.(Model)
 	if backMod.v4FocusSection != 0 {
 		t.Errorf("expected v4FocusSection == 0 after second Tab, got %d", backMod.v4FocusSection)
+	}
+}
+
+func TestTUI_Ola7_V4ActionScrollSmooth(t *testing.T) {
+	collector := &mockCollectorForTUI{}
+	m := NewModel(collector)
+	m.activeState = stateDiagnosisModal
+	m.v4FocusSection = 0 // acciones
+	m.v4ActionCursor = 0
+	m.overlayScrollOffset = 0
+
+	// Down en acciones no debe incrementar overlayScrollOffset
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mod2 := m2.(Model)
+	if mod2.overlayScrollOffset != 0 {
+		t.Errorf("expected overlayScrollOffset to remain 0, got %d", mod2.overlayScrollOffset)
+	}
+
+	// Up en acciones no debe decrementar por debajo de 0 ni alterar el offset
+	m3, _ := mod2.Update(tea.KeyMsg{Type: tea.KeyUp})
+	mod3 := m3.(Model)
+	if mod3.overlayScrollOffset != 0 {
+		t.Errorf("expected overlayScrollOffset to remain 0, got %d", mod3.overlayScrollOffset)
+	}
+}
+
+func TestTUI_Ola8_FirstRunLanguageOverlay(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_first_run_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	v := vault.NewFileVault(filePath, "test_passphrase")
+
+	collector := &mockCollectorForTUI{}
+
+	// Primera ejecución: sin idioma guardado en el vault -> debe arrancar en stateLanguageOverlay (C4)
+	m := NewModel(collector, v)
+	if m.activeState != stateLanguageOverlay {
+		t.Fatalf("expected activeState == stateLanguageOverlay on first run, got %v", m.activeState)
+	}
+
+	// Renderizar overlay: debe contener el título y opciones
+	view := m.View()
+	if !strings.Contains(view, "solv ·") || !strings.Contains(view, "español") || !strings.Contains(view, "english") {
+		t.Errorf("overlay does not contain expected language options: %s", view)
+	}
+
+	// Navegar a English
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mod2 := m2.(Model)
+	if mod2.langOverlayCursor != 1 {
+		t.Errorf("expected langOverlayCursor == 1, got %d", mod2.langOverlayCursor)
+	}
+
+	// Presionar Enter para confirmar English
+	m3, _ := mod2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mod3 := m3.(Model)
+	if mod3.activeState != stateFleetTable {
+		t.Errorf("expected stateFleetTable after confirming language, got %v", mod3.activeState)
+	}
+	if mod3.language != i18n.LangEN {
+		t.Errorf("expected language == LangEN, got %v", mod3.language)
+	}
+
+	// Verificar que se persistió en el vault
+	savedLang, err := v.GetLanguage()
+	if err != nil || savedLang != "en" {
+		t.Errorf("expected vault language 'en', got %q, err: %v", savedLang, err)
+	}
+
+	// Segunda ejecución: ya existe idioma en el vault -> arranca directo en stateFleetTable
+	mSecond := NewModel(collector, v)
+	if mSecond.activeState != stateFleetTable {
+		t.Errorf("expected second run to start in stateFleetTable, got %v", mSecond.activeState)
+	}
+	if mSecond.language != i18n.LangEN {
+		t.Errorf("expected second run to load LangEN, got %v", mSecond.language)
+	}
+}
+
+func TestTUI_Ola8_PreferencesLanguageToggle(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "solv_pref_test")
+	if err != nil {
+		t.Fatalf("error creando temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "vault.enc")
+	v := vault.NewFileVault(filePath, "test_passphrase")
+	_ = v.SaveLanguage("es")
+
+	collector := &mockCollectorForTUI{}
+	m := NewModel(collector, v)
+	m.activeState = statePreferences
+	m.preferencesCursor = 2 // Fila 2: Idioma
+
+	// Enter en fila 2 cicla de 'es' a 'en'
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mod2 := m2.(Model)
+	if mod2.language != i18n.LangEN {
+		t.Errorf("expected language to switch to LangEN, got %v", mod2.language)
+	}
+
+	// Verificar persistencia en el vault
+	saved, _ := v.GetLanguage()
+	if saved != "en" {
+		t.Errorf("expected vault language 'en', got %q", saved)
+	}
+
+	// Enter de nuevo cicla de 'en' a 'es'
+	m3, _ := mod2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mod3 := m3.(Model)
+	if mod3.language != i18n.LangES {
+		t.Errorf("expected language to switch back to LangES, got %v", mod3.language)
+	}
+}
+
+func TestTUI_Ola8_BilingualBanners80Cols(t *testing.T) {
+	inc := &service.Incident{
+		ID:               "inc-1",
+		GroupName:        "solv_net",
+		OriginConfidence: domain.ConfidenceProbable,
+		CandidateOrigin:  "postgres",
+		Cascade:          []string{"postgres", "api", "nginx"},
+		Diagnosis: domain.DiagnosisResult{
+			Level: domain.LevelAI,
+		},
+	}
+
+	bannerES := service.FormatIncidentBanner(inc, domain.BannerPolicyInformativo, 80, "es")
+	expectedES := "[INC] solv_net · origen prob. postgres -> 2 · [AI] · [d]"
+	if bannerES != expectedES {
+		t.Errorf("expected ES banner %q, got %q", expectedES, bannerES)
+	}
+	if lipgloss.Width(bannerES) > 80 {
+		t.Errorf("ES banner exceeds 80 cols: width %d", lipgloss.Width(bannerES))
+	}
+
+	bannerEN := service.FormatIncidentBanner(inc, domain.BannerPolicyInformativo, 80, "en")
+	expectedEN := "[INC] solv_net · probable origin postgres -> 2 · [AI] · [d]"
+	if bannerEN != expectedEN {
+		t.Errorf("expected EN banner %q, got %q", expectedEN, bannerEN)
+	}
+	if lipgloss.Width(bannerEN) > 80 {
+		t.Errorf("EN banner exceeds 80 cols: width %d", lipgloss.Width(bannerEN))
+	}
+}
+
+func TestTUI_Ola8_TriageLanguageDirective(t *testing.T) {
+	client := ai.NewTriageClient()
+
+	client.SetLanguage("es")
+	dirES := client.GetLanguageDirective()
+	if !strings.Contains(dirES, "español") || !strings.Contains(dirES, "OOMKilled") {
+		t.Errorf("expected Spanish directive with OOMKilled, got %q", dirES)
+	}
+
+	client.SetLanguage("en")
+	dirEN := client.GetLanguageDirective()
+	if !strings.Contains(dirEN, "English") || !strings.Contains(dirEN, "OOMKilled") {
+		t.Errorf("expected English directive with OOMKilled, got %q", dirEN)
 	}
 }
 

@@ -21,6 +21,7 @@ const (
 	stateDiagnosisModal
 	stateNetworkModal
 	statePreferences
+	stateLanguageOverlay
 )
 
 type tickMsg time.Time

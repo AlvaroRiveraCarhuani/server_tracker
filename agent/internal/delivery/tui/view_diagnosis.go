@@ -7,6 +7,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -216,19 +217,19 @@ func (m Model) GetV4Actions(c domain.ContainerMetric, res domain.DiagnosisResult
 		actions = append(actions, V4Action{
 			Key:        "r",
 			ActionType: domain.ActionRestart,
-			Label:      "aplicar restart",
+			Label:      i18n.T(m.language, "diagnosis.action_restart"),
 		})
 	case "stop":
 		actions = append(actions, V4Action{
 			Key:        "s",
 			ActionType: domain.ActionStop,
-			Label:      "aplicar stop",
+			Label:      i18n.T(m.language, "diagnosis.action_stop"),
 		})
 	case "isolate":
 		actions = append(actions, V4Action{
 			Key:        "x",
 			ActionType: domain.ActionIsolateNetwork,
-			Label:      "aislar de red",
+			Label:      i18n.T(m.language, "diagnosis.action_isolate"),
 		})
 	}
 
@@ -236,7 +237,7 @@ func (m Model) GetV4Actions(c domain.ContainerMetric, res domain.DiagnosisResult
 	actions = append(actions, V4Action{
 		Key:    "l",
 		IsLogs: true,
-		Label:  "ver logs",
+		Label:  i18n.T(m.language, "diagnosis.action_logs"),
 	})
 
 	// Solicitar IA si está en modo MANUAL o si el nivel es [RULE] o [SIG] o [AI~]
@@ -244,7 +245,7 @@ func (m Model) GetV4Actions(c domain.ContainerMetric, res domain.DiagnosisResult
 		actions = append(actions, V4Action{
 			Key:   "i",
 			IsAI:  true,
-			Label: "solicitar diagnóstico IA",
+			Label: i18n.T(m.language, "diagnosis.action_ai"),
 		})
 	}
 
@@ -264,7 +265,9 @@ func (m Model) viewDiagnosisModal() string {
 	innerW := modalWidth - 6
 
 	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
-	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(fmt.Sprintf("diagnóstico · %s", m.selectedName))
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(
+		i18n.T(m.language, "diagnosis.title", map[string]interface{}{"name": m.selectedName}),
+	)
 
 	var lines []string
 
@@ -275,6 +278,9 @@ func (m Model) viewDiagnosisModal() string {
 
 	if hasRes {
 		rootCause = res.RootCause
+		if res.MessageKey != "" {
+			rootCause = i18n.T(m.language, res.MessageKey)
+		}
 		switch res.Level {
 		case domain.LevelAI:
 			tagStyled = StyleTagAI.Render("[AI]")
@@ -307,20 +313,20 @@ func (m Model) viewDiagnosisModal() string {
 	compact := m.height < 30
 	needsScroll := compact && len(evidences) > 4
 
-	evidenceTitle := "evidencia:"
+	evidenceTitle := i18n.T(m.language, "diagnosis.evidence")
 	titleColor := ColorLavender
 	if needsScroll {
 		if m.v4FocusSection == 1 {
-			evidenceTitle = "evidencia [activo • ↑/↓ para scrollear]:"
+			evidenceTitle = i18n.T(m.language, "diagnosis.evidence_active")
 			titleColor = ColorPeach
 		} else {
-			evidenceTitle = "evidencia [pulsa Tab para scrollear]:"
+			evidenceTitle = i18n.T(m.language, "diagnosis.evidence_tab")
 		}
 	}
 	lines = append(lines, lipgloss.NewStyle().Foreground(titleColor).Bold(true).Render(evidenceTitle))
 
 	if len(evidences) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · sin telemetría anómala registrada"))
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · "+i18n.T(m.language, "diagnosis.no_evidence")))
 	} else if !needsScroll {
 		for _, ev := range evidences {
 			dot := lipgloss.NewStyle().Foreground(ColorSubtext1).Render("  ·")
@@ -340,7 +346,7 @@ func (m Model) viewDiagnosisModal() string {
 		offset := max(0, min(m.v4EvidenceScroll, maxScroll))
 
 		if offset > 0 {
-			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · ↑ más arriba"))
+			lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render("  · "+i18n.T(m.language, "diagnosis.more_above")))
 		}
 
 		end := offset + windowSize
@@ -366,11 +372,11 @@ func (m Model) viewDiagnosisModal() string {
 		if remaining > 0 {
 			if m.v4FocusSection == 1 {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorPeach).Render(
-					fmt.Sprintf("  · ↓ +%d más (usa ↓ para bajar)", remaining),
+					fmt.Sprintf("  · %s", i18n.T(m.language, "diagnosis.more_below", map[string]interface{}{"n": remaining})),
 				))
 			} else {
 				lines = append(lines, lipgloss.NewStyle().Foreground(ColorSubtext0).Render(
-					fmt.Sprintf("  · +%d más · pulsa [Tab] para scrollear", remaining),
+					fmt.Sprintf("  · %s", i18n.T(m.language, "diagnosis.more_tab", map[string]interface{}{"n": remaining})),
 				))
 			}
 		}
@@ -378,9 +384,9 @@ func (m Model) viewDiagnosisModal() string {
 	lines = append(lines, "")
 
 	// 3. Acciones Sugeridas Navegables
-	actionTitle := "acción sugerida:"
+	actionTitle := i18n.T(m.language, "diagnosis.action_title")
 	if needsScroll && m.v4FocusSection == 0 {
-		actionTitle = "acción sugerida [activo]:"
+		actionTitle = i18n.T(m.language, "diagnosis.action_active")
 	}
 	lines = append(lines, lipgloss.NewStyle().Foreground(ColorLavender).Bold(true).Render(actionTitle))
 	actions := m.GetV4Actions(m.pendingContainer, res)
@@ -405,12 +411,12 @@ func (m Model) viewDiagnosisModal() string {
 	var footerHint string
 	if needsScroll {
 		if m.v4FocusSection == 1 {
-			footerHint = lipgloss.NewStyle().Foreground(ColorPeach).Render("↑/↓: scrollear evidencia  ·  tab: ir a acciones  ·  esc: volver")
+			footerHint = lipgloss.NewStyle().Foreground(ColorPeach).Render(i18n.T(m.language, "diagnosis.footer_ev_act"))
 		} else {
-			footerHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  tab: scrollear evidencia  ·  ↑/↓: seleccionar  ·  esc: volver")
+			footerHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "diagnosis.footer_ev_tab"))
 		}
 	} else {
-		footerHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render("enter: ejecutar  ·  esc: volver  ·  ↑/↓: seleccionar")
+		footerHint = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "diagnosis.footer_normal"))
 	}
 	lines = append(lines, footerHint)
 

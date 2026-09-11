@@ -62,7 +62,7 @@ func HandlePanic(r interface{}) {
 	RestoreTTY()
 	stack := debug.Stack()
 	logPath := AppendCrashLog(r, stack)
-	fmt.Fprintf(os.Stderr, "SOLV TUI terminó inesperadamente. Registro de error guardado en %s\n", logPath)
+	fmt.Fprintf(os.Stderr, "crash logged to %s\n", logPath)
 	os.Exit(1)
 }
 

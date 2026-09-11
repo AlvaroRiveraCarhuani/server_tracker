@@ -652,6 +652,7 @@ type LocalRule struct {
 	MatchExitCode   *int   `json:"match_exit_code,omitempty"`
 	MatchLogPattern string `json:"match_log_pattern,omitempty"`
 	MatchStatus     string `json:"match_status,omitempty"`
+	MessageKey      string `json:"message_key,omitempty"` // Clave i18n para bilingüismo (Ola 8)
 	RootCause       string `json:"root_cause"`
 	Severity        string `json:"severity"`         // "critical", "warning", "info"
 	SuggestedAction string `json:"suggested_action"` // "restart", "stop", "isolate", "none"
@@ -660,6 +661,7 @@ type LocalRule struct {
 // DiagnosisResult almacena el resultado integral del triaje del incidente.
 type DiagnosisResult struct {
 	Level           DiagnosisLevel `json:"level"`
+	MessageKey      string         `json:"message_key,omitempty"` // Clave i18n para traducción en TUI/banners
 	RootCause       string         `json:"root_cause"`
 	Severity        string         `json:"severity"`
 	SuggestedAction string         `json:"suggested_action"`
@@ -700,6 +702,7 @@ var DefaultLocalRules = []LocalRule{
 	{
 		ID:              "oom_137",
 		MatchExitCode:   intPtr(137),
+		MessageKey:      "rule.oom_limit",
 		RootCause:       "OOMKilled: contenedor superó límite de memoria",
 		Severity:        "critical",
 		SuggestedAction: "restart",
@@ -707,6 +710,7 @@ var DefaultLocalRules = []LocalRule{
 	{
 		ID:              "sigterm_143",
 		MatchExitCode:   intPtr(143),
+		MessageKey:      "rule.sigterm",
 		RootCause:       "Terminado por SIGTERM/timeout",
 		Severity:        "warning",
 		SuggestedAction: "none",
@@ -715,6 +719,7 @@ var DefaultLocalRules = []LocalRule{
 		ID:              "net_refused_1",
 		MatchExitCode:   intPtr(1),
 		MatchLogPattern: "connection refused",
+		MessageKey:      "rule.net_refused",
 		RootCause:       "Servicio dependiente no alcanzable",
 		Severity:        "critical",
 		SuggestedAction: "none",
@@ -723,6 +728,7 @@ var DefaultLocalRules = []LocalRule{
 		ID:              "port_conflict_1",
 		MatchExitCode:   intPtr(1),
 		MatchLogPattern: "address already in use",
+		MessageKey:      "rule.port_conflict",
 		RootCause:       "Conflicto de puerto en el host",
 		Severity:        "critical",
 		SuggestedAction: "stop",
@@ -731,6 +737,7 @@ var DefaultLocalRules = []LocalRule{
 		ID:              "disk_full_1",
 		MatchExitCode:   intPtr(1),
 		MatchLogPattern: "no space left on device",
+		MessageKey:      "rule.disk_full",
 		RootCause:       "Sin espacio en disco",
 		Severity:        "critical",
 		SuggestedAction: "none",
@@ -739,6 +746,7 @@ var DefaultLocalRules = []LocalRule{
 		ID:              "perm_denied_1",
 		MatchExitCode:   intPtr(1),
 		MatchLogPattern: "permission denied",
+		MessageKey:      "rule.perm_denied",
 		RootCause:       "Error de permisos en volúmenes/archivos",
 		Severity:        "warning",
 		SuggestedAction: "none",
@@ -747,6 +755,7 @@ var DefaultLocalRules = []LocalRule{
 		ID:              "exec_format_1",
 		MatchExitCode:   intPtr(1),
 		MatchLogPattern: "exec format error",
+		MessageKey:      "rule.exec_format",
 		RootCause:       "Mismatch de arquitectura (ej: amd64 en arm64)",
 		Severity:        "critical",
 		SuggestedAction: "none",
@@ -755,6 +764,7 @@ var DefaultLocalRules = []LocalRule{
 		ID:              "kernel_killed_1",
 		MatchExitCode:   intPtr(1),
 		MatchLogPattern: "killed",
+		MessageKey:      "rule.kernel_killed",
 		RootCause:       "Proceso eliminado por el kernel (posible OOM global)",
 		Severity:        "critical",
 		SuggestedAction: "none",
@@ -762,6 +772,7 @@ var DefaultLocalRules = []LocalRule{
 	{
 		ID:              "crash_loop",
 		MatchStatus:     "CrashLoopBackOff",
+		MessageKey:      "rule.crash_loop",
 		RootCause:       "Fallo recurrente en el arranque",
 		Severity:        "critical",
 		SuggestedAction: "restart",
@@ -769,6 +780,7 @@ var DefaultLocalRules = []LocalRule{
 	{
 		ID:              "oom_status",
 		MatchStatus:     "OOMKilled",
+		MessageKey:      "rule.oom_status",
 		RootCause:       "OOMKilled: límite de memoria excedido",
 		Severity:        "critical",
 		SuggestedAction: "restart",
@@ -776,6 +788,7 @@ var DefaultLocalRules = []LocalRule{
 	{
 		ID:              "invalid_config_255",
 		MatchExitCode:   intPtr(255),
+		MessageKey:      "rule.invalid_config",
 		RootCause:       "Error de configuración o comando de entrada inválido",
 		Severity:        "warning",
 		SuggestedAction: "none",
@@ -783,6 +796,7 @@ var DefaultLocalRules = []LocalRule{
 	{
 		ID:              "unexpected_exit_0",
 		MatchExitCode:   intPtr(0),
+		MessageKey:      "rule.unexpected_exit",
 		RootCause:       "Reinicio limpio pero inesperado",
 		Severity:        "info",
 		SuggestedAction: "none",

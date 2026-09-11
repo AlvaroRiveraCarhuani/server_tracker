@@ -34,6 +34,7 @@ func (re *RuleEngine) Evaluate(exitCode int, status string, lastLogLines string)
 			if strings.Contains(statusLower, strings.ToLower(rule.MatchStatus)) {
 				return &domain.DiagnosisResult{
 					Level:           domain.LevelRule,
+					MessageKey:      rule.MessageKey,
 					RootCause:       rule.RootCause,
 					Severity:        rule.Severity,
 					SuggestedAction: rule.SuggestedAction,
@@ -48,6 +49,7 @@ func (re *RuleEngine) Evaluate(exitCode int, status string, lastLogLines string)
 				if strings.Contains(logsLower, strings.ToLower(rule.MatchLogPattern)) {
 					return &domain.DiagnosisResult{
 						Level:           domain.LevelRule,
+						MessageKey:      rule.MessageKey,
 						RootCause:       rule.RootCause,
 						Severity:        rule.Severity,
 						SuggestedAction: rule.SuggestedAction,
@@ -60,6 +62,7 @@ func (re *RuleEngine) Evaluate(exitCode int, status string, lastLogLines string)
 			// Regla de exit code sin requisito de logs
 			return &domain.DiagnosisResult{
 				Level:           domain.LevelRule,
+				MessageKey:      rule.MessageKey,
 				RootCause:       rule.RootCause,
 				Severity:        rule.Severity,
 				SuggestedAction: rule.SuggestedAction,

@@ -5,6 +5,7 @@ import hashlib
 import logging
 from typing import Optional, Tuple, Set
 import httpx
+from i18n import t
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ def verify_and_parse_callback(
     allowed_user_ids: Set[int],
     sender_user_id: int,
     max_ttl: int = CALLBACK_TTL_SECONDS,
+    lang: str = "es",
 ) -> Tuple[bool, Optional[str], Optional[str], Optional[str], str]:
     """
     Valida el callback de Telegram:
@@ -36,30 +38,30 @@ def verify_and_parse_callback(
     4. Firma criptográfica HMAC.
     """
     if sender_user_id not in allowed_user_ids:
-        return False, None, None, None, "Usuario no autorizado para ejecutar remediaciones"
+        return False, None, None, None, t(lang, "telegram.unauthorized")
 
     parts = callback_data.split(":")
     if len(parts) != 6 or parts[0] != "act":
-        return False, None, None, None, "Estructura de callback inválida"
+        return False, None, None, None, t(lang, "telegram.invalid_format")
 
     _, action, host_id, container_id, ts_str, received_sig = parts
 
     try:
         ts = int(ts_str)
     except ValueError:
-        return False, None, None, None, "Timestamp de callback no es numérico"
+        return False, None, None, None, t(lang, "telegram.invalid_timestamp")
 
     now = int(time.time())
     if now - ts > max_ttl or ts - now > 10:
-        return False, None, None, None, f"Botón expirado (TTL de {max_ttl}s superado)"
+        return False, None, None, None, t(lang, "telegram.expired", ttl=max_ttl)
 
     data_to_sign = f"{action}:{host_id}:{container_id}:{ts}"
     expected_sig = hmac.new(secret.encode("utf-8"), data_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()[:8]
 
     if not hmac.compare_digest(expected_sig, received_sig):
-        return False, None, None, None, "Firma de callback inválida o alterada"
+        return False, None, None, None, t(lang, "telegram.invalid_sig")
 
-    return True, action, host_id, container_id, "Válido"
+    return True, action, host_id, container_id, t(lang, "telegram.valid")
 
 async def send_interactive_telegram_alert(
     message: str,
@@ -69,6 +71,7 @@ async def send_interactive_telegram_alert(
     chat_id: Optional[str] = None,
     secret: Optional[str] = None,
     ai_diagnosis: Optional[str] = None,
+    lang: str = "es",
 ) -> bool:
     """Envía un mensaje interactivo con botón firmado a Telegram, opcionalmente con triaje de IA."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -86,6 +89,7 @@ async def send_interactive_telegram_alert(
     callback_data = generate_signed_callback(action, host_id, container_id, shared_secret)
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    btn_text = t(lang, "telegram.btn_action", action=action.upper(), ttl=60)
     payload = {
         "chat_id": target_chat_id,
         "text": full_message,
@@ -94,7 +98,7 @@ async def send_interactive_telegram_alert(
             "inline_keyboard": [
                 [
                     {
-                        "text": f"[{action.upper()}] Contenedor (60s)",
+                        "text": btn_text,
                         "callback_data": callback_data,
                     }
                 ]

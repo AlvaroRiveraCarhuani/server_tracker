@@ -198,33 +198,40 @@ func FormatTokens(tokens int) string {
 //   sesión: 47 req · ~$0.12
 //   sesión: 3 req · ~$0.00 (modelos free)
 //   sesión: 12 req · 4.2k tok (si hay modelo desconocido sin precio)
-func (m *AIMeter) FormatStatusBar() string {
+func (m *AIMeter) FormatStatusBar(lang ...string) string {
 	req := m.TotalRequests()
 	cost := m.TotalCost()
 	hasUnknown := m.HasUnknownPricingSession()
 
+	prefix := "sesión"
+	if len(lang) > 0 && strings.ToLower(strings.TrimSpace(lang[0])) == "en" {
+		prefix = "session"
+	}
+
 	if hasUnknown {
 		tok := m.TotalTokens()
-		return fmt.Sprintf("sesión: %d req · %s tok", req, FormatTokens(tok))
+		return fmt.Sprintf("%s: %d req · %s tok", prefix, req, FormatTokens(tok))
 	}
-	return fmt.Sprintf("sesión: %d req · ~$%.2f", req, cost)
+	return fmt.Sprintf("%s: %d req · ~$%.2f", prefix, req, cost)
 }
 
 // FormatProviderStats genera el texto de sesión para una fila de proveedor en V3.
-// Ejemplos:
-//   sesión: 12 req · 8.4k tok · ~$0.03
-//   sesión: 5 req · 1.2k tok (sin precio conocido)
-func (m *AIMeter) FormatProviderStats(provider domain.AIProvider) string {
+func (m *AIMeter) FormatProviderStats(provider domain.AIProvider, lang ...string) string {
 	agg := m.GetProviderStats(provider)
 	if agg.Requests == 0 {
 		return ""
 	}
 
+	prefix := "sesión"
+	if len(lang) > 0 && strings.ToLower(strings.TrimSpace(lang[0])) == "en" {
+		prefix = "session"
+	}
+
 	tokStr := FormatTokens(agg.TotalTokens)
 	if agg.HasUnknownPrice {
-		return fmt.Sprintf("sesión: %d req · %s tok", agg.Requests, tokStr)
+		return fmt.Sprintf("%s: %d req · %s tok", prefix, agg.Requests, tokStr)
 	}
-	return fmt.Sprintf("sesión: %d req · %s tok · ~$%.2f", agg.Requests, tokStr, agg.EstimatedCostUSD)
+	return fmt.Sprintf("%s: %d req · %s tok · ~$%.2f", prefix, agg.Requests, tokStr, agg.EstimatedCostUSD)
 }
 
 // lookupPricing busca precios en la tabla curada o determina gratuidad para local/free.

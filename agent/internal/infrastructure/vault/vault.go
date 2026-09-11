@@ -36,6 +36,7 @@ type credentialsPayload struct {
 	AIConfig         *domain.AIConfig    `json:"ai_config,omitempty"`
 	ThemeConfig      *domain.ThemeConfig `json:"theme_config,omitempty"`
 	PinnedContainers []string            `json:"pinned_containers,omitempty"`
+	Language         string              `json:"language,omitempty"`
 }
 
 // FileVault implementa ports.VaultPort guardando credenciales cifradas con AES-256-GCM + Argon2id.
@@ -238,6 +239,23 @@ func (v *FileVault) GetPinnedContainers() ([]string, error) {
 	return creds.PinnedContainers, nil
 }
 
+func (v *FileVault) SaveLanguage(lang string) error {
+	creds, _ := v.readPayload()
+	creds.Language = lang
+	return v.writePayload(creds)
+}
+
+func (v *FileVault) GetLanguage() (string, error) {
+	creds, err := v.readPayload()
+	if err != nil {
+		return "", err
+	}
+	if creds.Language == "" {
+		return "", ErrCredentialsNotFound
+	}
+	return creds.Language, nil
+}
+
 // KeyringVault implementa ports.VaultPort usando el Keyring nativo del SO.
 type KeyringVault struct{}
 
@@ -342,6 +360,18 @@ func (k *KeyringVault) GetPinnedContainers() ([]string, error) {
 		}
 	}
 	return nil, ErrCredentialsNotFound
+}
+
+func (k *KeyringVault) SaveLanguage(lang string) error {
+	return keyring.Set(ServiceName, "language", lang)
+}
+
+func (k *KeyringVault) GetLanguage() (string, error) {
+	data, err := keyring.Get(ServiceName, "language")
+	if err == nil && data != "" {
+		return data, nil
+	}
+	return "", ErrCredentialsNotFound
 }
 
 // EnvVault implementa ports.VaultPort leyendo variables de entorno para CI/CD.
@@ -487,6 +517,18 @@ func (e *EnvVault) GetPinnedContainers() ([]string, error) {
 	return cleaned, nil
 }
 
+func (e *EnvVault) SaveLanguage(lang string) error {
+	return errors.New("no se admite escritura en variables de entorno")
+}
+
+func (e *EnvVault) GetLanguage() (string, error) {
+	lang := os.Getenv("SOLV_LANGUAGE")
+	if lang != "" {
+		return lang, nil
+	}
+	return "", ErrCredentialsNotFound
+}
+
 // CascadeVault implementa ports.VaultPort intentando en orden: Keyring -> Archivo cifrado -> Env vars.
 type CascadeVault struct {
 	keyring   *KeyringVault
@@ -616,5 +658,26 @@ func (c *CascadeVault) GetPinnedContainers() ([]string, error) {
 		return names, nil
 	}
 	return nil, nil
+}
+
+func (c *CascadeVault) SaveLanguage(lang string) error {
+	err := c.keyring.SaveLanguage(lang)
+	if err == nil {
+		return nil
+	}
+	return c.fileVault.SaveLanguage(lang)
+}
+
+func (c *CascadeVault) GetLanguage() (string, error) {
+	if lang, err := c.keyring.GetLanguage(); err == nil && lang != "" {
+		return lang, nil
+	}
+	if lang, err := c.fileVault.GetLanguage(); err == nil && lang != "" {
+		return lang, nil
+	}
+	if lang, err := c.envVault.GetLanguage(); err == nil && lang != "" {
+		return lang, nil
+	}
+	return "", ErrCredentialsNotFound
 }
 

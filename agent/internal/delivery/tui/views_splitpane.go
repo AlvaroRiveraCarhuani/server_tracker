@@ -7,6 +7,7 @@ import (
 
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/domain"
 	"github.com/alvaroriverac/server_tracker_agent/internal/core/service"
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -46,6 +47,10 @@ func (m Model) View() string {
 
 	if m.activeState == stateNetworkModal {
 		return overlayModal(baseView, m.viewNetworkModal(), m.width, m.height)
+	}
+
+	if m.activeState == stateLanguageOverlay {
+		return overlayModal(baseView, m.viewFirstRunLanguageOverlay(), m.width, m.height)
 	}
 
 	return baseView
@@ -105,7 +110,8 @@ func (m Model) viewTable() string {
 
 	// Toast de primera ejecución (duración 5s o hasta primera tecla) (F5)
 	if m.toastVisible && !m.themeConfig.OnboardingHintShown && time.Now().Before(m.toastExpiry) {
-		toastLine := lipgloss.NewStyle().Foreground(ColorPeach).Render("  · pulsa ? para ver atajos\n")
+		toastMsg := i18n.T(m.language, "toast.onboarding")
+		toastLine := lipgloss.NewStyle().Foreground(ColorPeach).Render(fmt.Sprintf("  · %s\n", toastMsg))
 		b.WriteString(toastLine)
 	}
 
@@ -495,7 +501,7 @@ func (m Model) viewTable() string {
 			if activeInc != nil {
 				// Decisión I3: Mientras el incidente vive: banners individuales de involucrados se REEMPLAZAN por el banner [INC].
 				policy := domain.IncidentBannerPolicy(m.themeConfig.IncidentBannerPolicy)
-				bannerContent := service.FormatIncidentBanner(activeInc, policy, bannerWidth)
+				bannerContent := service.FormatIncidentBanner(activeInc, policy, bannerWidth, string(m.language))
 				if lipgloss.Width(bannerContent) > bannerWidth {
 					bannerContent = truncate(bannerContent, bannerWidth)
 				}
@@ -507,6 +513,9 @@ func (m Model) viewTable() string {
 
 			if hasRes {
 				diagText = res.RootCause
+				if res.MessageKey != "" {
+					diagText = i18n.T(m.language, res.MessageKey)
+				}
 				switch res.Level {
 				case domain.LevelAI:
 					tagStyled = StyleTagAI.Render("[AI]")
@@ -524,10 +533,10 @@ func (m Model) viewTable() string {
 					diagText = diag
 				} else if m.triagePending[selected.ID] {
 					tagStyled = StyleTagAI.Render("[AI]")
-					diagText = "Analizando causa raíz con IA..."
+					diagText = i18n.T(m.language, "banner.diagnosing")
 				} else {
 					tagStyled = StyleTagSignal.Render("[SIG]")
-					diagText = "Pendiente de diagnóstico analítico..."
+					diagText = i18n.T(m.language, "banner.pending")
 				}
 			}
 
@@ -537,8 +546,8 @@ func (m Model) viewTable() string {
 				usageBadge = lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  [%d tok • ~$%.4f]", usage.TotalTokens, usage.EstimatedCostUSD))
 			}
 
-			if strings.Contains(diagText, "no configurado") {
-				diagText = "Diagnóstico no configurado · [c]"
+			if strings.Contains(diagText, "no configurado") || strings.Contains(diagText, "not configured") {
+				diagText = i18n.T(m.language, "banner.not_configured")
 			}
 
 			// En modo MANUAL, si el banner es [RULE] o [SIG], agregar hint explícito para inferir con IA
@@ -546,26 +555,26 @@ func (m Model) viewTable() string {
 			baseRootCause := diagText
 			recTagText := ""
 			if hasRes && res.RecurrenceCount >= 3 {
-				recTagText = fmt.Sprintf("recurrente (%d/1h)", res.RecurrenceCount)
+				recTagText = i18n.T(m.language, "banner.recurrent", map[string]interface{}{"n": res.RecurrenceCount})
 				baseRootCause = strings.TrimSpace(strings.Replace(baseRootCause, recTagText, "", 1))
 			}
 
 			// 2. Confianza baja (S3)
 			confTagText := ""
 			if hasRes && res.Confidence == "low" {
-				confTagText = "· conf baja"
+				confTagText = i18n.T(m.language, "banner.conf_low")
 			}
 
 			// 3. Atajo de detalle
-			detailHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("· [d] detalle")
+			detailHint := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "banner.detail_hint"))
 
 			// 4. Atajo manual si aplica
 			manualHint := ""
 			if m.aiConfig.SelectionMode == domain.SelectionManual && (!hasRes || res.Level == domain.LevelRule || res.Level == domain.LevelSignal) {
 				if m.width <= 90 {
-					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render("· [i] IA")
+					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(i18n.T(m.language, "banner.ai_hint_short"))
 				} else {
-					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render("· [i] solicitar diagnóstico IA")
+					manualHint = lipgloss.NewStyle().Foreground(ColorLavender).Render(i18n.T(m.language, "banner.ai_hint_long"))
 				}
 			}
 
@@ -664,8 +673,11 @@ func (m Model) viewTable() string {
 			}
 
 			sessionStr := "sesión: 0 req · ~$0.00"
+			if m.language == i18n.LangEN {
+				sessionStr = "session: 0 req · ~$0.00"
+			}
 			if m.aiMeter != nil {
-				sessionStr = m.aiMeter.FormatStatusBar()
+				sessionStr = m.aiMeter.FormatStatusBar(string(m.language))
 			}
 			modeTokenWithSession := fmt.Sprintf("%s · %s%s", modeToken, sessionStr, filterTag)
 			b.WriteString(StyleStatusBar.Render(modeTokenWithSession))

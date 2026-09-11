@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alvaroriverac/server_tracker_agent/internal/i18n"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -17,14 +18,15 @@ func (m Model) viewPreferencesModal() string {
 
 	bgStyle := lipgloss.NewStyle().Background(ColorSurface0)
 	escBadge := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("esc")
-	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render("preferencias")
-	spLen := max(1, innerW-lipgloss.Width(headerLeft)-3)
+	titleText := i18n.T(m.language, "preferences.title")
+	headerLeft := lipgloss.NewStyle().Bold(true).Foreground(ColorPeach).Background(ColorSurface0).Render(titleText)
+	spLen := max(1, innerW-lipgloss.Width(headerLeft)-lipgloss.Width(escBadge))
 	header := headerLeft + bgStyle.Render(strings.Repeat(" ", spLen)) + escBadge
 
 	var lines []string
 
 	// Fila 0: Temas y estilos
-	row0Label := "temas y estilos"
+	row0Label := i18n.T(m.language, "preferences.theme")
 	enterBadge := "[Enter]"
 	row0Color := ColorText
 	if m.preferencesCursor == 0 {
@@ -48,10 +50,12 @@ func (m Model) viewPreferencesModal() string {
 
 	// Fila 1: Origen en banner
 	policy := m.themeConfig.IncidentBannerPolicy
-	if policy == "" {
-		policy = "informativo"
+	policyKey := "preferences.policy_info"
+	if policy == "prudente" {
+		policyKey = "preferences.policy_prud"
 	}
-	row1Label := fmt.Sprintf("origen en banner: %s", policy)
+	policyTranslated := i18n.T(m.language, policyKey)
+	row1Label := i18n.T(m.language, "preferences.banner_policy", map[string]interface{}{"policy": policyTranslated})
 	row1Color := ColorText
 	if m.preferencesCursor == 1 {
 		row1Color = ColorPeach
@@ -72,8 +76,34 @@ func (m Model) viewPreferencesModal() string {
 	row1Str := row1Style.Render(row1Left) + bgStyle.Render(strings.Repeat(" ", sp1)) + badge1Style.Render(enterBadge)
 	lines = append(lines, row1Str)
 
+	// Fila 2: Idioma / Language (Ola 8)
+	langDisplay := "español"
+	if m.language == i18n.LangEN {
+		langDisplay = "english"
+	}
+	row2Label := i18n.T(m.language, "preferences.language", map[string]interface{}{"lang": langDisplay})
+	row2Color := ColorText
+	if m.preferencesCursor == 2 {
+		row2Color = ColorPeach
+	}
+	row2Style := lipgloss.NewStyle().Foreground(row2Color).Background(ColorSurface0)
+	if m.preferencesCursor == 2 {
+		row2Style = row2Style.Bold(true)
+	}
+	row2Left := "  " + row2Label
+	if m.preferencesCursor == 2 {
+		row2Left = "> " + row2Label
+	}
+	sp2 := max(1, innerW-lipgloss.Width(row2Left)-lipgloss.Width(enterBadge))
+	badge2Style := lipgloss.NewStyle().Foreground(ColorSubtext1).Background(ColorSurface0)
+	if m.preferencesCursor == 2 {
+		badge2Style = lipgloss.NewStyle().Foreground(ColorPeach).Background(ColorSurface0).Bold(true)
+	}
+	row2Str := row2Style.Render(row2Left) + bgStyle.Render(strings.Repeat(" ", sp2)) + badge2Style.Render(enterBadge)
+	lines = append(lines, row2Str)
+
 	sep := lipgloss.NewStyle().Foreground(ColorSurface1).Background(ColorSurface0).Render(strings.Repeat("─", innerW))
-	footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render("enter: cambiar · esc: volver")
+	footer := lipgloss.NewStyle().Foreground(ColorSubtext0).Background(ColorSurface0).Render(i18n.T(m.language, "preferences.footer"))
 
 	body := fmt.Sprintf("%s\n\n%s\n\n%s\n%s", header, strings.Join(lines, "\n"), sep, footer)
 	return StyleModal.Width(modalWidth).Render(body)
