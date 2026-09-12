@@ -34,9 +34,9 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 	// 1. Evidencia de Evento: Código de salida y ciclo de vida
 	exitCode := domain.ParseExitCode(c.Status)
 	if exitCode >= 0 {
-		val := "reciente"
+		val := i18n.T(m.language, "time.recent")
 		if !c.LastStateChange.IsZero() {
-			val = formatDurationAgo(time.Since(c.LastStateChange))
+			val = formatDurationAgo(time.Since(c.LastStateChange), m.language)
 		}
 		items = append(items, EvidenceItem{
 			Type:  "evento",
@@ -49,7 +49,7 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 		items = append(items, EvidenceItem{
 			Type:  "evento",
 			Label: "restarts",
-			Value: fmt.Sprintf("%d en ciclo actual", c.RestartCount),
+			Value: i18n.T(m.language, "evidence.restarts_current", map[string]interface{}{"count": c.RestartCount}),
 		})
 	}
 
@@ -67,7 +67,7 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 		items = append(items, EvidenceItem{
 			Type:  "métrica",
 			Label: "RAM",
-			Value: fmt.Sprintf("%.1fMB (sin límite Docker)", ramMB),
+			Value: i18n.T(m.language, "evidence.ram_no_limit", map[string]interface{}{"ram": fmt.Sprintf("%.1f", ramMB)}),
 		})
 	}
 
@@ -85,7 +85,7 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 		spark := RenderSparkline(hist.CPU, 0, 100, 8)
 		items = append(items, EvidenceItem{
 			Type:  "métrica",
-			Label: "tendencia",
+			Label: i18n.T(m.language, "evidence.trend"),
 			Value: fmt.Sprintf("%s  %s", trend.Label, spark),
 		})
 	}
@@ -123,8 +123,8 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 			if owner, ok := conflicts[p.HostPort]; ok {
 				items = append(items, EvidenceItem{
 					Type:  "red",
-					Label: fmt.Sprintf("puerto %d", p.HostPort),
-					Value: fmt.Sprintf("retenido por: %s", owner),
+					Label: i18n.T(m.language, "evidence.port", map[string]interface{}{"port": p.HostPort}),
+					Value: i18n.T(m.language, "evidence.held_by", map[string]interface{}{"owner": owner}),
 				})
 			}
 		}
@@ -145,14 +145,18 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 			if lastEv == nil && c.Name != "" {
 				lastEv = m.crashJournal.LastEvent(c.Name)
 			}
-			lastAgo := "reciente"
+			lastAgo := i18n.T(m.language, "time.recent")
 			if lastEv != nil {
-				lastAgo = formatDurationAgo(time.Since(lastEv.Timestamp))
+				lastAgo = formatDurationAgo(time.Since(lastEv.Timestamp), m.language)
 			}
 			items = append(items, EvidenceItem{
 				Type:  "historial",
 				Label: "historial",
-				Value: fmt.Sprintf("%d crashes en 1h (%s) · último %s", count1h, homog, lastAgo),
+				Value: i18n.T(m.language, "evidence.crashes_homog", map[string]interface{}{
+					"count": count1h,
+					"homog": homog,
+					"ago":   lastAgo,
+				}),
 			})
 
 			prevDiag := m.crashJournal.PreviousDiagnosis(c.ID)
@@ -162,7 +166,7 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 			if prevDiag != "" {
 				items = append(items, EvidenceItem{
 					Type:  "historial",
-					Label: "hipótesis previa",
+					Label: i18n.T(m.language, "evidence.prev_hypothesis"),
 					Value: prevDiag,
 				})
 			}
@@ -176,7 +180,7 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 				if trend != "" {
 					items = append(items, EvidenceItem{
 						Type:  "historial",
-						Label: "tendencia RAM",
+						Label: i18n.T(m.language, "evidence.ram_trend"),
 						Value: trend,
 					})
 				}
@@ -189,13 +193,13 @@ func BuildEvidence(m Model, c domain.ContainerMetric, res domain.DiagnosisResult
 		items = append(items, EvidenceItem{
 			Type:  "proceso",
 			Label: "proceso",
-			Value: "confianza del modelo: baja",
+			Value: i18n.T(m.language, "evidence.model_confidence_low"),
 		})
 	}
 	if res.ReanalyzedDeep || res.ProcessNote != "" {
 		note := res.ProcessNote
 		if note == "" {
-			note = "re-analizado en DEEP por severidad crítica"
+			note = i18n.T(m.language, "evidence.reanalyzed_deep")
 		}
 		items = append(items, EvidenceItem{
 			Type:  "proceso",
@@ -439,7 +443,20 @@ func (m Model) viewDiagnosisModal() string {
 	return StyleModal.Width(modalWidth).Render(body)
 }
 
-func formatDurationAgo(d time.Duration) string {
+func formatDurationAgo(d time.Duration, lang ...i18n.Language) string {
+	l := i18n.LangES
+	if len(lang) > 0 && lang[0] != "" {
+		l = lang[0]
+	}
+	if l == i18n.LangEN {
+		if d < time.Minute {
+			return fmt.Sprintf("%ds ago", int(d.Seconds()))
+		}
+		if d < time.Hour {
+			return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		}
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
 	if d < time.Minute {
 		return fmt.Sprintf("hace %ds", int(d.Seconds()))
 	}

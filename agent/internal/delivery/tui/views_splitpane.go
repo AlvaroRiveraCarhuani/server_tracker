@@ -239,14 +239,14 @@ func (m Model) viewTable() string {
 		}
 
 		if total == 0 {
-			leftContent.WriteString(StyleCardTitle.Render("CONTENEDORES (0)") + "\n\n")
+			leftContent.WriteString(StyleCardTitle.Render(i18n.T(m.language, "fleet.title.containers", map[string]interface{}{"count": 0})) + "\n\n")
 			if m.filterValue != "" {
-				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("Sin resultados para '%s'", m.filterValue)))
+				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "fleet.no_results", map[string]interface{}{"filter": m.filterValue})))
 			} else {
-				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Escaneando socket..."))
+				leftContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "fleet.scanning")))
 			}
 		} else if numPinned > 0 {
-			leftContent.WriteString(StyleCardTitle.Render(fmt.Sprintf("FIJADOS (%d)", numPinned)) + "\n\n")
+			leftContent.WriteString(StyleCardTitle.Render(i18n.T(m.language, "fleet.title.pinned", map[string]interface{}{"count": numPinned})) + "\n\n")
 
 			availRows := max(3, panelHeight-3)
 			pinnedCount := min(numPinned, max(1, availRows/2))
@@ -297,9 +297,13 @@ func (m Model) viewTable() string {
 				start = max(0, end-maxVisibleRows)
 			}
 
-			leftHeader := fmt.Sprintf("CONTENEDORES (%d)", total)
+			leftHeader := i18n.T(m.language, "fleet.title.containers", map[string]interface{}{"count": total})
 			if total > maxVisibleRows {
-				leftHeader = fmt.Sprintf("CONTENEDORES (%d) • %d-%d", total, start+1, end)
+				leftHeader = i18n.T(m.language, "fleet.title.containers_page", map[string]interface{}{
+					"count": total,
+					"start": start + 1,
+					"end":   end,
+				})
 			}
 			leftContent.WriteString(StyleCardTitle.Render(leftHeader) + "\n\n")
 
@@ -320,10 +324,11 @@ func (m Model) viewTable() string {
 
 			pinnedBadge := ""
 			if m.isPinned(sel.Name) {
+				pinnedText := i18n.T(m.language, "detail.pinned_badge")
 				if NerdFontsMode {
-					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[󰤱 FIJADO]")
+					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(fmt.Sprintf("[󰤱 %s]", pinnedText))
 				} else {
-					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render("[^ FIJADO]")
+					pinnedBadge = " " + lipgloss.NewStyle().Foreground(ColorPeach).Bold(true).Render(fmt.Sprintf("[^ %s]", pinnedText))
 				}
 			}
 
@@ -331,14 +336,17 @@ func (m Model) viewTable() string {
 			headerLine := fmt.Sprintf("%s  %s  %s%s", tech.Badge(), lipgloss.NewStyle().Bold(true).Foreground(ColorText).Render(sel.Name), statusBadge, pinnedBadge)
 			rightContent.WriteString(headerLine + "\n")
 
-			subInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  Imagen: %s  |  ID: %s  |  Categoría: %s", sel.Image, sel.ID, tech.Category))
+			subInfo := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(fmt.Sprintf("  %s: %s  |  %s: %s  |  %s: %s",
+				i18n.T(m.language, "detail.image"), sel.Image,
+				i18n.T(m.language, "detail.id"), sel.ID,
+				i18n.T(m.language, "detail.category"), tech.Category))
 			rightContent.WriteString(subInfo + "\n\n")
 
 			// 1. CICLO DE VIDA
-			rightContent.WriteString(StyleCardTitle.Render("CICLO DE VIDA") + "\n")
+			rightContent.WriteString(StyleCardTitle.Render(i18n.T(m.language, "detail.lifecycle")) + "\n")
 			stateDesc := sel.Status
 			if !sel.LastStateChange.IsZero() {
-				stateDesc = fmt.Sprintf("%s · %s", sel.Status, formatDurationAgo(time.Since(sel.LastStateChange)))
+				stateDesc = fmt.Sprintf("%s · %s", sel.Status, formatDurationAgo(time.Since(sel.LastStateChange), m.language))
 			}
 			rightContent.WriteString(fmt.Sprintf("  state: %s\n", stateDesc))
 
@@ -346,10 +354,13 @@ func (m Model) viewTable() string {
 			if policyStr == "" {
 				policyStr = "--"
 			}
-			rightContent.WriteString(fmt.Sprintf("  restarts: %d en ciclo · policy: %s\n\n", sel.RestartCount, policyStr))
+			rightContent.WriteString(fmt.Sprintf("  %s\n\n", i18n.T(m.language, "detail.restarts", map[string]interface{}{
+				"count":  sel.RestartCount,
+				"policy": policyStr,
+			})))
 
 			// 2. VITALES
-			rightContent.WriteString(StyleCardTitle.Render("VITALES") + "\n")
+			rightContent.WriteString(StyleCardTitle.Render(i18n.T(m.language, "detail.vitals")) + "\n")
 			cpuThrottlingStr := fmt.Sprintf("throttling %.0f%%", sel.CPUPercentThrottled)
 			cpuGlyph := "[OK]"
 			if sel.CPUPercent > 80.0 {
@@ -366,16 +377,19 @@ func (m Model) viewTable() string {
 				pct := (ramMB / limitMB) * 100.0
 				ramTag := "[OK]"
 				if pct >= 85.0 {
-					ramTag = "[!!] riesgo OOM"
+					ramTag = i18n.T(m.language, "detail.ram_oom_risk")
 				}
 				rightContent.WriteString(fmt.Sprintf("  RAM: %.0f/%.0fMB (%.0f%%)               %s\n", ramMB, limitMB, pct, ramTag))
 			} else {
-				rightContent.WriteString(fmt.Sprintf("  RAM: %.1f MB (Sin límite Docker)    [OK]\n", ramMB))
+				rightContent.WriteString(fmt.Sprintf("  %s    [OK]\n", i18n.T(m.language, "detail.ram_no_limit", map[string]interface{}{
+					"ram": fmt.Sprintf("%.1f", ramMB),
+				})))
 			}
 
 			// RED
 			egressStr, egressStyle := FormatEgress(sel.EgressBytesSec)
-			rightContent.WriteString(fmt.Sprintf("  RED: egress %-16s       [OK]\n", egressStyle.Render(egressStr)))
+			netLabel := i18n.T(m.language, "detail.network")
+			rightContent.WriteString(fmt.Sprintf("  %s: egress %-16s       [OK]\n", netLabel, egressStyle.Render(egressStr)))
 
 			// Trend
 			hist := m.metricsHistory[sel.ID]
@@ -384,11 +398,12 @@ func (m Model) viewTable() string {
 				spark := RenderSparkline(hist.CPU, 0, 100, 8)
 				rightContent.WriteString(fmt.Sprintf("  trend: %s  %s\n\n", spark, trend.Style.Render(trend.Label)))
 			} else {
-				rightContent.WriteString("  trend: --  estable\n\n")
+				stableStr := i18n.T(m.language, "detail.trend_stable")
+				rightContent.WriteString(fmt.Sprintf("  trend: --  %s\n\n", stableStr))
 			}
 
 			// 3. DIAGNÓSTICO
-			rightContent.WriteString(StyleCardTitle.Render("DIAGNÓSTICO") + "\n")
+			rightContent.WriteString(StyleCardTitle.Render(i18n.T(m.language, "detail.diagnosis")) + "\n")
 			var incPart *service.Incident
 			if m.incidentAggregator != nil {
 				incPart = m.incidentAggregator.GetActiveIncidentFor(sel.Name)
@@ -400,7 +415,11 @@ func (m Model) viewTable() string {
 			if incPart != nil {
 				incTag := StyleTagIncident.Render("[INC]")
 				dHint := lipgloss.NewStyle().Foreground(ColorLavender).Render("[d]")
-				rightContent.WriteString(fmt.Sprintf("  %s parte de incidente %s · %s\n\n", incTag, incPart.GroupName, dHint))
+				incStr := i18n.T(m.language, "detail.part_of_incident", map[string]interface{}{
+					"group": incPart.GroupName,
+					"hint":  dHint,
+				})
+				rightContent.WriteString(fmt.Sprintf("  %s %s\n\n", incTag, incStr))
 			} else if res, ok := m.diagnosisResults[sel.ID]; ok {
 				var tagStr string
 				switch res.Level {
@@ -414,18 +433,24 @@ func (m Model) viewTable() string {
 					tagStr = StyleTagSignal.Render("[SIG]")
 				}
 				cause := res.RootCause
+				if res.MessageKey != "" {
+					cause = i18n.T(m.language, res.MessageKey)
+				}
 				if len(cause) > 35 {
 					cause = cause[:32] + "..."
 				}
-				detailHint := lipgloss.NewStyle().Foreground(ColorLavender).Render("[d] detalle")
+				detailHint := lipgloss.NewStyle().Foreground(ColorLavender).Render(i18n.T(m.language, "detail.diagnosis_hint_detail"))
 				rightContent.WriteString(fmt.Sprintf("  %s %s · %s\n\n", tagStr, cause, detailHint))
 			} else {
-				solicitarHint := lipgloss.NewStyle().Foreground(ColorLavender).Render("[d] solicitar")
-				rightContent.WriteString(fmt.Sprintf("  [--] sin diagnóstico · %s\n\n", solicitarHint))
+				solicitarHint := lipgloss.NewStyle().Foreground(ColorLavender).Render(i18n.T(m.language, "detail.diagnosis_hint_request"))
+				noDiagStr := i18n.T(m.language, "detail.no_diagnosis", map[string]interface{}{
+					"hint": solicitarHint,
+				})
+				rightContent.WriteString(fmt.Sprintf("  %s\n\n", noDiagStr))
 			}
 
 			// 4. CONTEXTO
-			rightContent.WriteString(StyleCardTitle.Render("CONTEXTO") + "\n")
+			rightContent.WriteString(StyleCardTitle.Render(i18n.T(m.language, "detail.context")) + "\n")
 			netStr := "--"
 			if len(sel.Networks) > 0 {
 				netStr = strings.Join(sel.Networks, ", ")
@@ -446,15 +471,19 @@ func (m Model) viewTable() string {
 			dependents := depGraph.GetDependents(sel)
 			var depLine string
 			if len(dependents) == 0 {
-				depLine = "  dependen de mi: --\n"
+				depLine = fmt.Sprintf("  %s\n", i18n.T(m.language, "detail.depend_none"))
 			} else if len(dependents) <= 2 {
-				depLine = fmt.Sprintf("  dependen de mi: %s\n", strings.Join(dependents, ", "))
+				depLine = fmt.Sprintf("  %s\n", i18n.T(m.language, "detail.depend_list", map[string]interface{}{
+					"list": strings.Join(dependents, ", "),
+				}))
 			} else {
-				depLine = fmt.Sprintf("  dependen de mi: %d · [n] detalle\n", len(dependents))
+				depLine = fmt.Sprintf("  %s\n", i18n.T(m.language, "detail.depend_count", map[string]interface{}{
+					"count": len(dependents),
+				}))
 			}
 			rightContent.WriteString(depLine)
 		} else {
-			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render("Selecciona un contenedor de la lista izquierda."))
+			rightContent.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "fleet.select_hint")))
 		}
 
 		rightPanel := StyleCard.Width(rightWidth).Height(panelHeight).Render(rightContent.String())
@@ -639,10 +668,11 @@ func (m Model) viewTable() string {
 		} else {
 			filterTag := ""
 			if m.filterValue != "" {
-				filterTag = fmt.Sprintf(" [Filtro: '%s']", m.filterValue)
+				filterTag = i18n.T(m.language, "status_bar.filter", map[string]interface{}{"filter": m.filterValue})
 			}
 
 			// Token V0 de Modo AIOps
+			modeLabel := i18n.T(m.language, "status_bar.mode")
 			modeToken := ""
 			switch m.aiConfig.SelectionMode {
 			case domain.SelectionAuto:
@@ -651,25 +681,25 @@ func (m Model) viewTable() string {
 				if disp == "" {
 					disp = fastM.ID
 				}
-				modeToken = fmt.Sprintf("[Tab] modo: AUTO · %s (%s)", disp, modelTag(fastM))
+				modeToken = fmt.Sprintf("[Tab] %s: AUTO · %s (%s)", modeLabel, disp, modelTag(fastM))
 			case domain.SelectionFast:
 				fastM := domain.GetAssignedModel(domain.SlotFast, m.aiConfig.SlotPolicy)
 				disp := fastM.DisplayName
 				if disp == "" {
 					disp = fastM.ID
 				}
-				modeToken = fmt.Sprintf("[Tab] modo: FAST · %s (%s)", disp, modelTag(fastM))
+				modeToken = fmt.Sprintf("[Tab] %s: FAST · %s (%s)", modeLabel, disp, modelTag(fastM))
 			case domain.SelectionDeep:
 				deepM := domain.GetAssignedModel(domain.SlotDeep, m.aiConfig.SlotPolicy)
 				disp := deepM.DisplayName
 				if disp == "" {
 					disp = deepM.ID
 				}
-				modeToken = fmt.Sprintf("[Tab] modo: DEEP · %s (%s)", disp, modelTag(deepM))
+				modeToken = fmt.Sprintf("[Tab] %s: DEEP · %s (%s)", modeLabel, disp, modelTag(deepM))
 			case domain.SelectionManual:
-				modeToken = fmt.Sprintf("[Tab] modo: MANUAL · %s", m.aiConfig.ActiveModel)
+				modeToken = fmt.Sprintf("[Tab] %s: MANUAL · %s", modeLabel, m.aiConfig.ActiveModel)
 			default:
-				modeToken = "[Tab] modo: AUTO"
+				modeToken = fmt.Sprintf("[Tab] %s: AUTO", modeLabel)
 			}
 
 			sessionStr := "sesión: 0 req · ~$0.00"
@@ -693,7 +723,10 @@ func (m Model) viewLogs() string {
 	glyph, statusText, statusStyle := FormatStatus(m.selectedState, 0, 0)
 	statusBadge := statusStyle.Render(fmt.Sprintf("%s %s", glyph, statusText))
 
-	breadcrumb := fmt.Sprintf("[<] Volver (Esc) | Logs: %s | Estado: %s", m.selectedName, statusBadge)
+	breadcrumb := i18n.T(m.language, "logs.breadcrumb", map[string]interface{}{
+		"name":   m.selectedName,
+		"status": statusBadge,
+	})
 	b.WriteString(StyleTitle.Render(breadcrumb) + "\n")
 
 	// Buscar métrica actual del contenedor seleccionado
@@ -734,7 +767,9 @@ func (m Model) viewLogs() string {
 		} else {
 			peakMB := hist.PeakRAM()
 			ramBar := RenderGradientBar(curRAM, peakMB, 12)
-			trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB %s [%s] (Pico: %.1f MB, Sin límite Docker)", curRAM, ramBar, ramSpark, peakMB))
+			noLimitStr := i18n.T(m.language, "logs.no_limit")
+			peakStr := i18n.T(m.language, "logs.peak")
+			trendLines = append(trendLines, fmt.Sprintf("  RAM: %6.1f MB %s [%s] (%s: %.1f MB, %s)", curRAM, ramBar, ramSpark, peakStr, peakMB, noLimitStr))
 		}
 	} else if selectedMetric != nil {
 		ramMB := float64(selectedMetric.RAMBytes) / (1024 * 1024)
@@ -757,7 +792,7 @@ func (m Model) viewLogs() string {
 	// Renderizar el visor de logs scrollable
 	b.WriteString(m.viewport.View() + "\n")
 
-	helpBar := lipgloss.NewStyle().Foreground(ColorSubtext0).Render("[Esc]: Volver a la flota  |  [Flechas / Scroll]: Desplazar registros")
+	helpBar := lipgloss.NewStyle().Foreground(ColorSubtext0).Render(i18n.T(m.language, "logs.footer"))
 	b.WriteString(helpBar)
 
 	return b.String()

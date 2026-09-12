@@ -3308,7 +3308,8 @@ func TestTUI_Ola7_Criterio7_PisoLimpioYToast(t *testing.T) {
 // Criterio 8: No regresión de olas 0 a 6
 func TestTUI_Ola7_Criterio8_NoRegresionOlas0a6(t *testing.T) {
 	mockColl := &mockCollectorForTUI{}
-	m := NewModel(mockColl)
+	mockV := &mockVaultForTUI{savedLanguage: "es"}
+	m := NewModel(mockColl, mockV)
 	m.width = 100
 	m.height = 30
 
@@ -3365,7 +3366,8 @@ func TestTUI_Ola7_Criterio8_NoRegresionOlas0a6(t *testing.T) {
 // Test interactivo: Tab alterna entre acciones y mini-scroll de evidencias con indicación clara
 func TestTUI_Ola7_EvidenciaMiniScrollYTab(t *testing.T) {
 	mockColl := &mockCollectorForTUI{}
-	m := NewModel(mockColl)
+	mockV := &mockVaultForTUI{savedLanguage: "es"}
+	m := NewModel(mockColl, mockV)
 	m.width = 80
 	m.height = 25 // modo compacto
 
@@ -3590,5 +3592,66 @@ func TestTUI_Ola8_TriageLanguageDirective(t *testing.T) {
 		t.Errorf("expected English directive with OOMKilled, got %q", dirEN)
 	}
 }
+
+func TestTUI_Ola8_WorkspaceBilingualMainScreen(t *testing.T) {
+	mockColl := &mockCollectorForTUI{}
+	mockV := &mockVaultForTUI{
+		savedLanguage: "es",
+		savedThemeConfig: domain.ThemeConfig{
+			ActiveTheme:         "tokyo-night",
+			OnboardingHintShown: true,
+		},
+	}
+	m := NewModel(mockColl, mockV)
+	m.width = 120
+	m.height = 30
+	m.metrics = []domain.ContainerMetric{
+		{
+			ID:     "c-front",
+			Name:   "front-app",
+			Image:  "nginx:alpine",
+			Status: "running",
+		},
+	}
+	m.cursor = 0
+
+	// 1. En Español
+	viewES := m.View()
+	expectedESSnippets := []string{
+		"CONTENEDORES",
+		"CICLO DE VIDA",
+		"VITALES",
+		"DIAGNÓSTICO",
+		"CONTEXTO",
+		"Imagen:",
+		"Categoría:",
+		"modo: AUTO",
+	}
+	for _, snip := range expectedESSnippets {
+		if !strings.Contains(viewES, snip) {
+			t.Errorf("expected ES snippet %q in view:\n%s", snip, viewES)
+		}
+	}
+
+	// 2. Conmutar a English
+	m.language = i18n.LangEN
+	viewEN := m.View()
+	expectedENSnippets := []string{
+		"CONTAINERS",
+		"LIFECYCLE",
+		"VITALS",
+		"DIAGNOSIS",
+		"CONTEXT",
+		"Image:",
+		"Category:",
+		"mode: AUTO",
+	}
+	for _, snip := range expectedENSnippets {
+		if !strings.Contains(viewEN, snip) {
+			t.Errorf("expected EN snippet %q in view:\n%s", snip, viewEN)
+		}
+	}
+}
+
 
 

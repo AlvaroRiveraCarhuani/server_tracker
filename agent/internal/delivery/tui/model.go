@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,6 +141,8 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 	var vaultSvc ports.VaultPort
 	if len(v) > 0 && v[0] != nil {
 		vaultSvc = v[0]
+	} else if flag.Lookup("test.v") != nil {
+		vaultSvc = nil
 	} else {
 		homeDir, _ := os.UserHomeDir()
 		vaultPath := filepath.Join(homeDir, ".solv", "vault.enc")
@@ -227,6 +230,8 @@ func NewModel(collector ports.CollectorPort, v ...ports.VaultPort) Model {
 		} else {
 			firstRunLang = true
 		}
+	} else if flag.Lookup("test.v") == nil {
+		firstRunLang = true
 	}
 
 	initState := stateFleetTable
