@@ -2,3 +2,9 @@ venv/
 .git/
 .gitignore
 __pycache__/
+*.db
+.env
+.pytest_cache/
+pytest.ini
+docs/
+agent/

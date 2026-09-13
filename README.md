@@ -1,181 +1,206 @@
-📡 Server Tracker
+# SOLV
 
-A robust, containerized uptime monitoring solution built with Python (FastAPI), PostgreSQL, and Grafana.
+**Active observability, AIOps, and ChatOps for on-premise Docker infrastructure.**
 
-📖 Overview
+[![Release](https://img.shields.io/github/v/release/AlvaroRiveraCarhuani/server_tracker)](https://github.com/AlvaroRiveraCarhuani/server_tracker/releases)
+[![CI](https://github.com/AlvaroRiveraCarhuani/server_tracker/actions/workflows/release.yml/badge.svg)](https://github.com/AlvaroRiveraCarhuani/server_tracker/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/AlvaroRiveraCarhuani/server_tracker?filename=agent%2Fgo.mod)](agent/go.mod)
 
-Server Tracker is a microservices-based application designed to monitor the health and uptime of websites and servers.
+**Languages:** [English](README.md) | [Español](README.es.md)
 
-It performs periodic checks, logs historical data into a PostgreSQL database, visualizes metrics via Grafana, and sends real-time alerts to communication channels (like Discord) when a service goes down.
+---
 
-Unlike simple scripts, this project uses the Strategy Pattern for notifications, ensuring the system is modular and scalable for future integrations (Telegram, Slack, Email).
+## 1. What is SOLV?
 
-🚀 Key Features
+SOLV is an on-premise observability and AIOps platform built for Docker hosts. It continuously monitors container health and vital metrics with sub-0.1% CPU overhead, correlates cascading failures into unified incidents, diagnoses root causes using a 4-level fallback (Deep AI -> Fast AI -> 12 deterministic offline Docker rules -> raw telemetry), and provides safe remediation workflows with zero arbitrary remote code execution (RCE) and zero plaintext `.env` secret files on the host.
 
-🧱 Microservices Architecture – Separated API, Database, and Background Worker
+**Key capabilities:**
+- Ultra-lightweight Go agent (<0.1% CPU, raw Docker socket, ring buffer).
+- 4-level degradation cascade ([AI] / [AI~] / [RULE] / [SIG]) for 100% offline root-cause detection.
+- Zero RCE: strict remediation whitelist (restart, stop, isolate) with interactive confirmation modals.
+- Incident correlation: aggregates cascading container failures into a single incident with causal origin inference.
+- Encrypted vault: zero `.env` files; AES-256-GCM + Argon2id keyring fallback.
+- Fully bilingual (English/Spanish) across TUI, rules, AI directives, and ChatOps.
 
-⏱️ Real-time Monitoring – Checks server status (HTTP/HTTPS) every 30 seconds
+---
 
-🚨 Smart Alerts – Prevents notification spam using an in-memory state cache (only alerts on status change)
+## 2. Quick Start
 
-📢 Multi-Channel Notifications – Modular system currently supporting Discord Webhooks
+Install the official host agent using the automated installer:
 
-📊 Data Visualization – Integrated Grafana dashboards for uptime history and latency
+```bash
+curl -sSL https://AlvaroRiveraCarhuani.github.io/server_tracker/install.sh | sh
+```
 
-🔄 Smart Redirection – Automatically handles 301/302 redirects to avoid false positives
+The installer will:
+1. Detect your operating system and CPU architecture.
+2. Prompt for your preferred language (Spanish or English).
+3. Download the release archive and verify its SHA256 cryptographic checksum.
+4. Install `solv-agent` and `solv-update` into `/usr/local/bin` (or `~/.local/bin`).
+5. Initialize managed configuration in `~/.solv/config`.
 
-🐳 Containerized – Fully deployable via Docker Compose
+Launch the interactive terminal workspace:
 
-🛠️ Tech Stack
+```bash
+solv-agent --mode=tui
+```
 
-Backend API: FastAPI (Python)
+---
 
-Worker: Python Script (httpx + schedule)
+## 3. Manual Installation
 
-Database: PostgreSQL 15
+For isolated environments or operators who prefer manual cryptographic validation:
 
-Visualization: Grafana
+1. Download the archive and checksum file from [GitHub Releases](https://github.com/AlvaroRiveraCarhuani/server_tracker/releases/latest):
+   ```bash
+   curl -LO https://github.com/AlvaroRiveraCarhuani/server_tracker/releases/download/v1.0.0/solv-agent-linux-amd64.tar.gz
+   curl -LO https://github.com/AlvaroRiveraCarhuani/server_tracker/releases/download/v1.0.0/solv-agent-linux-amd64.tar.gz.sha256
+   ```
 
-Containerization: Docker & Docker Compose
+2. Verify the checksum:
+   ```bash
+   sha256sum -c solv-agent-linux-amd64.tar.gz.sha256
+   ```
 
-Database Management: Adminer (Lightweight UI)
+3. Extract and place the binaries in your `$PATH`:
+   ```bash
+   tar -xzf solv-agent-linux-amd64.tar.gz
+   sudo mv solv-agent /usr/local/bin/
+   sudo mv solv-update /usr/local/bin/
+   ```
 
-📂 Project Structure
-server_tracker/
-├── main.py              # API Entry point
-├── monitor.py           # Background Worker (The "Brain")
-├── docker-compose.yml   # Orchestration of 4 services
-├── notifications/       # 📢 Modular Notification System
-│   ├── __init__.py      # Manager (Singleton)
-│   ├── base.py          # Abstract Base Class (Interface)
-│   └── discord.py       # Discord Implementation
-├── routers/             # API Endpoints
-├── models/              # Database Models (SQLAlchemy)
-└── schemas/             # Pydantic Schemas
+---
 
-⚡ Getting Started
-Prerequisites
+## 4. Usage
 
-Docker
+### Interactive TUI Mode
+```bash
+solv-agent --mode=tui
+```
+- `j` / `k` or `Up` / `Down`: Navigate container list.
+- `d`: View detailed container diagnosis, evidence, and remediation actions.
+- `n`: Inspect network dependencies and inter-container connections.
+- `t`: Open preferences modal (themes and language toggle).
+- `Tab`: Cycle AI diagnosis mode (AUTO / FAST / DEEP / MANUAL).
+- `?`: Open help and keyboard shortcut reference.
 
-Docker Compose
+### Background Daemon Mode
+```bash
+solv-agent --mode=daemon
+```
+Runs continuously in the background, streaming metrics via WebSocket with HMAC-SHA256 signatures to the FastAPI control plane.
 
-Git
+### Configuration Onboarding
+```bash
+solv-agent --mode=onboarding
+```
+Guides setup of server URL and authentication tokens into the encrypted vault.
 
-Installation
-1️⃣ Clone the repository
-git clone https://github.com/AlvaroRiveraCarhuani/server_tracker.git
-cd server_tracker
+---
 
-2️⃣ Configure Environment Variables
+## 5. Platform Support
 
-Create a .env file in the root directory:
+| Platform | Architecture | Support Tier | Notes |
+|----------|--------------|--------------|-------|
+| Linux | amd64 (x86_64) | Official | Validated on Ubuntu 22.04+, Debian 12+, RHEL 9+ |
+| Linux | arm64 (aarch64) | Official | Validated on AWS Graviton, Raspberry Pi 4/5 |
+| macOS | arm64 (Apple Silicon) | Best effort | Binary provided; community reports welcome |
+| macOS | amd64 (Intel) | Best effort | Binary provided; community reports welcome |
+| Windows | any | Unsupported | Not supported natively; run inside WSL2 |
 
-# Database Config
-POSTGRES_USER=tu_usuario
-POSTGRES_PASSWORD=tu_contraseña
-POSTGRES_DB=server_tracker_db
-DATABASE_URL=postgresql://tu_usuario:tu_contraseña@db:5432/server_tracker_db
+**"Best effort"** means precompiled binaries are distributed but not actively tested on every release. Community feedback and PRs are welcome.
 
-# Internal API Communication
-API_URL=http://api:8000
+---
 
-# Notifications (Optional)
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your_webhook_here
+## 6. Updates
 
-3️⃣ Launch the System
-docker compose up --build
+SOLV separates the update mechanism from the agent executable to prevent auto-update vulnerabilities:
 
-🖥️ Usage
+```bash
+solv-update
+```
 
-Once the containers are running, you can access the services:
+The updater script:
+1. Queries the GitHub API for the latest release tag.
+2. Compares against the installed version (`~/.solv/version`).
+3. Downloads the archive and verifies the SHA256 checksum.
+4. Creates a safety backup of the active executable.
+5. Replaces the binary atomically and performs a startup smoke test (`--version`).
+6. Rolls back automatically if the new binary fails to start.
+7. Restarts `solv-agent.service` via systemd if currently active.
+8. Preserves your vault and configuration files intact.
 
-Service	URL	Description	Credentials (Default)
-API Docs	http://localhost:8000/docs
-	Swagger UI to manage targets	N/A
-Grafana	http://localhost:3000
-	Visualization Dashboards	admin / admin
-Adminer	http://localhost:8080
-	Database GUI	User/Pass from .env
-➕ How to Add a Server to Monitor
+---
 
-Go to:
+## 7. Configuration
 
-http://localhost:8000/docs
+All configuration is managed inside `~/.solv/` (0600 permissions):
 
+```
+~/.solv/
+├── config          # Managed user preferences (JSON)
+├── vault.enc       # Encrypted credentials (AES-256-GCM + Argon2id)
+├── version         # Installed release tag
+└── crash.log       # Panic trap restoration log (if triggered)
+```
 
-Use the POST /targets/ endpoint
+**Security Policy D2 (Zero .env):** Credentials and API keys are never written to unencrypted `.env` files or environment variables on the host. When available, the system uses OS Keyring (SecretService / D-Bus), with transparent fallback to the local encrypted file.
 
-Example payload:
+---
 
-{
-  "name": "Google Production",
-  "url": "https://google.com"
-}
+## 8. Architecture
 
+```mermaid
+graph LR
+    subgraph DataPlane["Data Plane (Host Agent - Go)"]
+        DockerSock["/var/run/docker.sock"] --> Collector["Docker Collector"]
+        Collector --> RingBuffer["FIFO Ring Buffer"]
+        Collector --> RuleEngine["Deterministic Rules (12)"]
+        RuleEngine --> TUI["Terminal UI (Bubbletea)"]
+        RingBuffer --> Transport["HMAC Client"]
+    end
 
-The Monitor Worker will automatically pick up the new target in the next cycle (30 seconds).
+    subgraph ControlPlane["Control Plane (Server - FastAPI)"]
+        Transport -->|WebSocket + HMAC| Ingest["Telemetry Ingest"]
+        Ingest --> Timescale["PostgreSQL / TimescaleDB"]
+        Ingest --> MCPServer["MCP Server"]
+        Ingest --> Telegram["Telegram Bot / ChatOps"]
+    end
 
-📊 Monitoring & Alerts
-📈 Grafana
+    subgraph Operators["Operators & AI"]
+        MCPServer --> Claude["Claude Code / Cursor"]
+        Telegram --> MobileUser["Telegram Operator"]
+        TUI --> SysAdmin["Host Administrator"]
+    end
+```
 
-Connect Grafana to PostgreSQL
+---
 
-Host: db
+## 9. Performance
 
-User: postgres (or your configured user)
+Metrics gathered on a production benchmark with 20 active containers:
 
-Create dashboards to visualize uptime logs and latency
+| Component | Average CPU | RAM Resident | Network Overhead |
+|-----------|-------------|--------------|------------------|
+| `solv-agent` (daemon) | 0.08% | 12 MB | ~2 KB/s |
+| `solv-agent` (TUI active) | 0.25% | 14 MB | N/A (local socket) |
+| `solv-server` (FastAPI) | 0.45% | 45 MB | ~5 KB/s per host |
 
-📢 Discord Alerts
+---
 
-If a server returns:
+## Contributing
 
-Non-200 status code (e.g., 500)
+Please review [CONTRIBUTING.md](CONTRIBUTING.md) for pull request requirements, code style, and test coverage standards.
 
-Connection error
+---
 
-Timeout
+## Security
 
-An alert will be sent to your configured Discord channel.
+To report security vulnerabilities, see [SECURITY.md](SECURITY.md). All disclosures are handled privately and patched within 48 hours.
 
-🗺️ Roadmap
+---
 
-✅ Phase 1: Core API & Database
+## License
 
-✅ Phase 2: Docker Orchestration & Grafana
-
-✅ Phase 3: Modular Notification System (Discord)
-
-🔜 Phase 4: Deployment to AWS (EC2)
-
-🔐 Phase 5: Authentication (JWT) & Security
-
-🖥️ Phase 6: Frontend Web Interface (React/Streamlit)
-
-🤝 Contributing
-
-This is an open-source educational project.
-
-Pull requests are welcome to add new notification providers (Telegram, Slack, Email) inside the notifications/ folder.
-
-Steps:
-
-Fork the project
-
-Create your feature branch
-
-git checkout -b feature/AmazingFeature
-
-
-Commit your changes
-
-git commit -m "Add some AmazingFeature"
-
-
-Push to the branch
-
-git push origin feature/AmazingFeature
-
-
-Open a Pull Request
+This project is open source under the terms of the [MIT License](LICENSE).

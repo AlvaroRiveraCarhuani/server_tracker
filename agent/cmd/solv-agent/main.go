@@ -16,10 +16,18 @@ import (
 	"github.com/alvaroriverac/server_tracker_agent/internal/infrastructure/vault"
 )
 
+var Version = "v1.0.0"
+
 func main() {
 	mode := flag.String("mode", "", "Modo de ejecucion: 'daemon', 'tui', 'onboarding', 'status'")
 	interval := flag.Duration("interval", 10*time.Second, "Intervalo de muestreo para el modo daemon")
+	versionFlag := flag.Bool("version", false, "Muestra la versión de solv-agent")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("solv-agent %s\n", Version)
+		os.Exit(0)
+	}
 
 	homeDir, _ := os.UserHomeDir()
 	vaultPath := filepath.Join(homeDir, ".solv", "vault.enc")

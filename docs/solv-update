@@ -1,0 +1,194 @@
+#!/bin/sh
+# Update script for SOLV Server Tracker
+
+set -e
+
+REPO="AlvaroRiveraCarhuani/server_tracker"
+GITHUB_API="https://api.github.com/repos/${REPO}/releases/latest"
+CONFIG_DIR="$HOME/.solv"
+VERSION_FILE="$CONFIG_DIR/version"
+
+CHECK="✓"
+CROSS="✗"
+INFO="ℹ"
+WARN="⚠"
+
+cleanup() {
+    if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+        rm -rf "$TMPDIR"
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# Check existing version
+CURRENT_VERSION=""
+if [ -f "$VERSION_FILE" ]; then
+    CURRENT_VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
+fi
+
+if [ -z "$CURRENT_VERSION" ]; then
+    if command -v solv-agent >/dev/null 2>&1; then
+        CURRENT_VERSION=$(solv-agent --version 2>/dev/null | awk '{print $2}' || echo "")
+    fi
+fi
+
+if [ -z "$CURRENT_VERSION" ]; then
+    echo "${CROSS} Cannot determine current installed version."
+    echo "${INFO} Please run the official installer to configure your environment:"
+    echo "       curl -sSL https://${REPO%%/*}.github.io/${REPO##*/}/install.sh | sh"
+    exit 1
+fi
+
+echo "${INFO} Current installed version: ${CURRENT_VERSION}"
+echo "${INFO} Checking for updates on GitHub..."
+
+API_RESPONSE=$(curl -fsSL --connect-timeout 8 "$GITHUB_API" 2>/dev/null || echo "")
+LATEST_VERSION=$(echo "$API_RESPONSE" | grep '"tag_name"' | head -n 1 | cut -d'"' -f4)
+
+if [ -z "$LATEST_VERSION" ]; then
+    echo "${CROSS} Failed to fetch latest release from GitHub API."
+    exit 1
+fi
+
+if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+    echo "${CHECK} Already up to date (${CURRENT_VERSION})"
+    exit 0
+fi
+
+echo "${INFO} Update available: ${CURRENT_VERSION} -> ${LATEST_VERSION}"
+
+# Detect OS and architecture
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+
+case "$OS" in
+    linux) OS="linux" ;;
+    darwin) OS="darwin" ;;
+    *) echo "${CROSS} Unsupported OS: $OS"; exit 1 ;;
+esac
+
+case "$ARCH" in
+    x86_64|amd64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) echo "${CROSS} Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+# Check available disk space in /tmp
+TMPDIR=$(mktemp -d /tmp/solv-update.XXXXXX)
+REQUIRED_MB=50
+AVAILABLE_MB=$(df -m "$TMPDIR" | tail -1 | awk '{print $4}')
+if [ -n "$AVAILABLE_MB" ] && [ "$AVAILABLE_MB" -lt "$REQUIRED_MB" ]; then
+    echo "${CROSS} Insufficient disk space in /tmp (${AVAILABLE_MB}MB available, ${REQUIRED_MB}MB required)."
+    exit 1
+fi
+
+FILENAME="solv-agent-${OS}-${ARCH}.tar.gz"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_VERSION}/${FILENAME}"
+CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
+
+echo "${INFO} Downloading ${FILENAME}..."
+if ! curl -fSL --progress-bar -o "$TMPDIR/$FILENAME" "$DOWNLOAD_URL"; then
+    echo "${CROSS} Download failed from: $DOWNLOAD_URL"
+    exit 1
+fi
+
+if ! curl -fsSL -o "$TMPDIR/package.sha256" "$CHECKSUM_URL"; then
+    echo "${CROSS} Checksum download failed from: $CHECKSUM_URL"
+    exit 1
+fi
+
+# Verify checksum
+echo "${INFO} Verifying SHA256 checksum..."
+EXPECTED_HASH=$(awk '{print $1}' "$TMPDIR/package.sha256")
+cd "$TMPDIR"
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_HASH=$(sha256sum "$FILENAME" | awk '{print $1}')
+else
+    ACTUAL_HASH=$(shasum -a 256 "$FILENAME" | awk '{print $1}')
+fi
+cd - >/dev/null
+
+if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+    echo "${CROSS} Checksum verification FAILED!"
+    echo "  Expected: $EXPECTED_HASH"
+    echo "  Actual:   $ACTUAL_HASH"
+    echo "${CROSS} Aborting update for security."
+    exit 1
+fi
+
+echo "${CHECK} Checksum verified."
+
+# Extract new release
+tar -xzf "$TMPDIR/$FILENAME" -C "$TMPDIR"
+
+AGENT_PATH=$(command -v solv-agent || echo "")
+if [ -z "$AGENT_PATH" ]; then
+    echo "${CROSS} solv-agent executable not found in PATH."
+    exit 1
+fi
+
+TARGET_DIR=$(dirname "$AGENT_PATH")
+NEED_SUDO=0
+if [ ! -w "$AGENT_PATH" ] || [ ! -w "$TARGET_DIR" ]; then
+    NEED_SUDO=1
+fi
+
+BACKUP_PATH="${AGENT_PATH}.backup"
+echo "${INFO} Creating backup at ${BACKUP_PATH}..."
+
+if [ "$NEED_SUDO" -eq 1 ]; then
+    sudo cp "$AGENT_PATH" "$BACKUP_PATH"
+    sudo cp "$TMPDIR/solv-agent" "$AGENT_PATH"
+    sudo chmod +x "$AGENT_PATH"
+    if [ -f "$TMPDIR/solv-update" ]; then
+        sudo cp "$TMPDIR/solv-update" "$TARGET_DIR/solv-update"
+        sudo chmod +x "$TARGET_DIR/solv-update"
+    fi
+else
+    cp "$AGENT_PATH" "$BACKUP_PATH"
+    cp "$TMPDIR/solv-agent" "$AGENT_PATH"
+    chmod +x "$AGENT_PATH"
+    if [ -f "$TMPDIR/solv-update" ]; then
+        cp "$TMPDIR/solv-update" "$TARGET_DIR/solv-update"
+        chmod +x "$TARGET_DIR/solv-update"
+    fi
+fi
+
+# Test new binary (smoke test)
+echo "${INFO} Verifying new binary startup..."
+if ! "$AGENT_PATH" --version >/dev/null 2>&1; then
+    echo "${CROSS} New binary failed startup test! Rolling back to backup..."
+    if [ "$NEED_SUDO" -eq 1 ]; then
+        sudo mv "$BACKUP_PATH" "$AGENT_PATH"
+    else
+        mv "$BACKUP_PATH" "$AGENT_PATH"
+    fi
+    echo "${WARN} Rollback completed. Running version restored."
+    exit 1
+fi
+
+# Cleanup backup on success
+if [ "$NEED_SUDO" -eq 1 ]; then
+    sudo rm -f "$BACKUP_PATH"
+else
+    rm -f "$BACKUP_PATH"
+fi
+
+# Update version file (vault and config preserved intact)
+mkdir -p "$CONFIG_DIR"
+echo "$LATEST_VERSION" > "$VERSION_FILE"
+
+# Restart systemd service if running
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet solv-agent.service 2>/dev/null; then
+        echo "${INFO} Restarting active solv-agent.service..."
+        if [ "$NEED_SUDO" -eq 1 ]; then
+            sudo systemctl restart solv-agent.service
+        else
+            systemctl restart solv-agent.service 2>/dev/null || true
+        fi
+        echo "${CHECK} Service restarted."
+    fi
+fi
+
+echo "${CHECK} Successfully updated to ${LATEST_VERSION}!"

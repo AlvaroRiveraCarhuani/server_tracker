@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SOLV Server Tracker :: Active Observability & AIOps for Docker</title>
+  <meta name="description" content="Active observability, AIOps, and ChatOps for on-premise Docker infrastructure. Zero RCE, zero .env files, encrypted vault, and offline deterministic degradation.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #1e1e2e;
+      --bg-mantle: #181825;
+      --bg-crust: #11111b;
+      --bg-surface: #313244;
+      --bg-surface1: #45475a;
+      --text: #cdd6f4;
+      --subtext: #a6adc8;
+      --subtext-dim: #6c7086;
+      --mauve: #cba6f7;
+      --blue: #89b4fa;
+      --sapphire: #74c7ec;
+      --green: #a6e3a1;
+      --peach: #fab387;
+      --red: #f38ba8;
+      --yellow: #f9e2af;
+      --border: #313244;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    a {
+      color: var(--sapphire);
+      text-decoration: none;
+      transition: color 0.15s ease;
+    }
+
+    a:hover {
+      color: var(--mauve);
+      text-decoration: underline;
+    }
+
+    header {
+      background: var(--bg-mantle);
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .nav-container {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      font-family: var(--font-mono);
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--mauve);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .brand span {
+      color: var(--subtext);
+      font-size: 0.85rem;
+      font-weight: 400;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.95rem;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+      flex: 1;
+      width: 100%;
+    }
+
+    .hero {
+      text-align: center;
+      padding: 2.5rem 0 3.5rem;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      background: var(--bg-surface);
+      color: var(--mauve);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--border);
+    }
+
+    .hero h1 {
+      font-size: 2.75rem;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 1rem;
+      color: #ffffff;
+    }
+
+    .hero p {
+      font-size: 1.2rem;
+      color: var(--subtext);
+      max-width: 750px;
+      margin: 0 auto 2.5rem;
+    }
+
+    .terminal-box {
+      background: var(--bg-crust);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-width: 720px;
+      margin: 0 auto 3rem;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      text-align: left;
+    }
+
+    .terminal-header {
+      background: var(--bg-mantle);
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--bg-surface1);
+    }
+
+    .terminal-title {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--subtext-dim);
+      margin-left: 0.5rem;
+    }
+
+    .terminal-body {
+      padding: 1.25rem 1.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-crust);
+    }
+
+    .cmd-text {
+      color: var(--green);
+      user-select: all;
+      word-break: break-all;
+    }
+
+    .cmd-text span {
+      color: var(--subtext-dim);
+    }
+
+    .copy-btn {
+      background: var(--bg-surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+      margin-left: 1rem;
+    }
+
+    .copy-btn:hover {
+      background: var(--bg-surface1);
+      color: var(--mauve);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+      margin: 3rem 0;
+    }
+
+    .feature-card {
+      background: var(--bg-mantle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.1rem;
+      color: var(--peach);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .feature-card p {
+      color: var(--subtext);
+      font-size: 0.95rem;
+    }
+
+    .section-title {
+      font-size: 1.75rem;
+      color: #ffffff;
+      margin: 3.5rem 0 1.25rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0 2rem;
+      background: var(--bg-mantle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 0.9rem 1.2rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.95rem;
+    }
+
+    th {
+      background: var(--bg-crust);
+      color: var(--mauve);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .tag-official {
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .tag-besteffort {
+      color: var(--yellow);
+    }
+
+    .tag-unsupported {
+      color: var(--red);
+    }
+
+    pre code {
+      display: block;
+      background: var(--bg-crust);
+      padding: 1rem 1.25rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--text);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+
+    footer {
+      background: var(--bg-crust);
+      border-top: 1px solid var(--border);
+      padding: 2rem;
+      text-align: center;
+      color: var(--subtext-dim);
+      font-size: 0.85rem;
+    }
+
+    footer a {
+      color: var(--subtext);
+    }
+
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2rem; }
+      .hero p { font-size: 1.05rem; }
+      .terminal-body { flex-direction: column; gap: 1rem; align-items: stretch; }
+      .copy-btn { width: 100%; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="nav-container">
+      <div class="brand">
+        SOLV <span>:: server_tracker</span>
+      </div>
+      <nav class="nav-links">
+        <a href="#quickstart">Install</a>
+        <a href="#platforms">Platforms</a>
+        <a href="#manual">Manual</a>
+        <a href="https://github.com/AlvaroRiveraCarhuani/server_tracker" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-badge">v1.0.0 Public Release</div>
+      <h1>Active Observability &amp; AIOps for Docker</h1>
+      <p>
+        Ultralight Go agent and FastAPI control plane designed for on-premise infrastructure.
+        Deterministic 4-level fallback, causal incident graph correlation, zero RCE, and zero .env files.
+      </p>
+
+      <div class="terminal-box" id="quickstart">
+        <div class="terminal-header">
+          <div class="terminal-dot"></div>
+          <div class="terminal-dot"></div>
+          <div class="terminal-dot"></div>
+          <span class="terminal-title">quick install</span>
+        </div>
+        <div class="terminal-body">
+          <div class="cmd-text">
+            <span>$ </span>curl -sSL https://AlvaroRiveraCarhuani.github.io/server_tracker/install.sh | sh
+          </div>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('curl -sSL https://AlvaroRiveraCarhuani.github.io/server_tracker/install.sh | sh'); this.innerText='copied!'; setTimeout(()=>this.innerText='copy', 2000)">copy</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <h3>&rarr; Lightweight Data Plane</h3>
+        <p>Go host agent consumes less than 0.1% CPU. Operates with raw Unix socket, ring buffer telemetry, and offline Docker rule evaluation.</p>
+      </div>
+      <div class="feature-card">
+        <h3>&rarr; Zero RCE Guarantee</h3>
+        <p>Strict whitelist for container lifecycle remediation (restart, stop, isolate). Arbitrary command execution is structurally barred.</p>
+      </div>
+      <div class="feature-card">
+        <h3>&rarr; 4-Level AI Degradation</h3>
+        <p>Cascades gracefully from Deep AI to Fast AI, then 12 deterministic Docker rules, and raw container metrics. Works completely offline.</p>
+      </div>
+      <div class="feature-card">
+        <h3>&rarr; Causal Incident Correlation</h3>
+        <p>Correlates multi-container cascading failures into single incidents. Identifies root causes with confidence tags and manual override.</p>
+      </div>
+      <div class="feature-card">
+        <h3>&rarr; Encrypted Vault</h3>
+        <p>Zero plaintext secrets. Credentials resolve via OS Keyring fallback to Argon2id-derived AES-256-GCM encrypted file storage.</p>
+      </div>
+      <div class="feature-card">
+        <h3>&rarr; Native Bilingual TUI</h3>
+        <p>Bilingual Spanish and English operator terminal with Catppuccin Mocha aesthetics, split-pane navigation, and live telemetry.</p>
+      </div>
+    </div>
+
+    <h2 class="section-title" id="platforms">Platform Support</h2>
+    <p style="color: var(--subtext); margin-bottom: 1rem;">
+      We strictly adhere to platform honesty. Architectures marked as best-effort provide precompiled binaries but are not continuously smoke-tested by the maintainer.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Platform</th>
+          <th>Architecture</th>
+          <th>Support Tier</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Linux</td>
+          <td>amd64 (x86_64)</td>
+          <td><span class="tag-official">&check; Official</span></td>
+          <td>Primary production target. Validated on Ubuntu 22.04+, Debian 12+.</td>
+        </tr>
+        <tr>
+          <td>Linux</td>
+          <td>arm64 (aarch64)</td>
+          <td><span class="tag-official">&check; Official</span></td>
+          <td>Validated on ARM64 servers and Raspberry Pi 4/5.</td>
+        </tr>
+        <tr>
+          <td>macOS</td>
+          <td>arm64 (Apple Silicon)</td>
+          <td><span class="tag-besteffort">&warning; Best Effort</span></td>
+          <td>Binary provided. Docker Desktop socket integration works.</td>
+        </tr>
+        <tr>
+          <td>macOS</td>
+          <td>amd64 (Intel)</td>
+          <td><span class="tag-besteffort">&warning; Best Effort</span></td>
+          <td>Binary provided. Community reports welcome.</td>
+        </tr>
+        <tr>
+          <td>Windows</td>
+          <td>any</td>
+          <td><span class="tag-unsupported">&cross; Unsupported</span></td>
+          <td>Windows native host is unsupported. Run inside WSL2 with Docker Desktop.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 class="section-title" id="manual">Manual Installation &amp; Cryptographic Verification</h2>
+    <p style="color: var(--subtext);">
+      If your environment restricts running remote shell scripts directly, follow the manual download workflow:
+    </p>
+
+    <pre><code># 1. Download binary and SHA256 checksum from GitHub Releases
+curl -LO https://github.com/AlvaroRiveraCarhuani/server_tracker/releases/download/v1.0.0/solv-agent-linux-amd64.tar.gz
+curl -LO https://github.com/AlvaroRiveraCarhuani/server_tracker/releases/download/v1.0.0/solv-agent-linux-amd64.tar.gz.sha256
+
+# 2. Verify cryptographic checksum
+sha256sum -c solv-agent-linux-amd64.tar.gz.sha256
+
+# 3. Extract and install into system PATH
+tar -xzf solv-agent-linux-amd64.tar.gz
+sudo mv solv-agent /usr/local/bin/
+sudo mv solv-update /usr/local/bin/
+
+# 4. Launch interactive terminal workspace
+solv-agent --mode=tui</code></pre>
+
+    <h2 class="section-title">Updates</h2>
+    <p style="color: var(--subtext);">
+      SOLV includes an independent updater script that downloads new releases, validates SHA256 checksums, makes an atomic backup, and rolls back if startup fails:
+    </p>
+    <pre><code>solv-update</code></pre>
+
+  </main>
+
+  <footer>
+    <div style="max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: gap: 1rem;">
+      <div>SOLV Server Tracker &bull; Open Source under MIT License</div>
+      <div>
+        <a href="https://github.com/AlvaroRiveraCarhuani/server_tracker" target="_blank" rel="noopener">GitHub Repository</a> &bull;
+        <a href="https://github.com/AlvaroRiveraCarhuani/server_tracker/releases" target="_blank" rel="noopener">Releases</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

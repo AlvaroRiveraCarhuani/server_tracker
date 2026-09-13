@@ -1,0 +1,176 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify Go & Python Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'agent/go.mod'
+          cache-dependency-path: agent/go.sum
+
+      - name: Verify Go module dependencies
+        working-directory: ./agent
+        run: go mod verify
+
+      - name: Run Go tests with race detector
+        working-directory: ./agent
+        run: go test -race ./...
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: server/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r server/requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run Python tests
+        working-directory: ./server
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+        run: pytest -v
+
+  build-and-release:
+    name: Build Multi-Architecture Binaries
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            support: official
+          - os: linux
+            arch: arm64
+            support: official
+          - os: darwin
+            arch: amd64
+            support: best-effort
+          - os: darwin
+            arch: arm64
+            support: best-effort
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'agent/go.mod'
+          cache-dependency-path: agent/go.sum
+
+      - name: Compile solv-agent binary
+        working-directory: ./agent
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          go build -ldflags="-X main.Version=${VERSION} -s -w" -o solv-agent ./cmd/solv-agent
+
+      - name: Prepare Package
+        run: |
+          mkdir -p dist/package
+          cp agent/solv-agent dist/package/solv-agent
+          cp docs/solv-update dist/package/solv-update
+          chmod +x dist/package/solv-agent dist/package/solv-update
+
+          cat > dist/package/README.txt <<EOF
+          SOLV Server Tracker Host Agent (${{ github.ref_name }})
+          Platform: ${{ matrix.os }}/${{ matrix.arch }} (Support: ${{ matrix.support }})
+
+          Installation:
+          Copy 'solv-agent' and 'solv-update' to /usr/local/bin or ~/.local/bin
+
+          Usage:
+          solv-agent --mode=tui
+          solv-agent --mode=daemon
+          solv-update
+
+          More information:
+          https://github.com/AlvaroRiveraCarhuani/server_tracker
+          EOF
+
+          cd dist/package
+          tar -czf ../solv-agent-${{ matrix.os }}-${{ matrix.arch }}.tar.gz solv-agent solv-update README.txt
+          cd ..
+          sha256sum solv-agent-${{ matrix.os }}-${{ matrix.arch }}.tar.gz > solv-agent-${{ matrix.os }}-${{ matrix.arch }}.tar.gz.sha256
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: solv-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  create-release:
+    name: Publish GitHub Release
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Consolidate release artifacts
+        run: |
+          mkdir -p release
+          find artifacts -name '*.tar.gz' -exec cp {} release/ \;
+          find artifacts -name '*.sha256' -exec cp {} release/ \;
+          cd release
+          cat *.sha256 > checksums.txt
+          ls -lh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/*.tar.gz
+            release/*.sha256
+            release/checksums.txt
+          body_path: docs/release-notes/v1.0.0.md
+          draft: false
+          prerelease: false
