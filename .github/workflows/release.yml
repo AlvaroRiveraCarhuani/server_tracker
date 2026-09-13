@@ -164,6 +164,17 @@ jobs:
           cat *.sha256 > checksums.txt
           ls -lh
 
+      - name: Determine Release Notes
+        id: release_notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          NOTES_FILE="docs/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "path=$NOTES_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "path=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -171,6 +182,7 @@ jobs:
             release/*.tar.gz
             release/*.sha256
             release/checksums.txt
-          body_path: docs/release-notes/v1.0.0.md
+          body_path: ${{ steps.release_notes.outputs.path }}
+          generate_release_notes: true
           draft: false
           prerelease: false

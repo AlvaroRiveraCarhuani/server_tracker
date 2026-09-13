@@ -80,7 +80,13 @@ if command -v solv-agent >/dev/null 2>&1; then
     EXISTING_VERSION=$(solv-agent --version 2>/dev/null | awk '{print $2}')
     echo "${INFO} Found existing installation: solv-agent ${EXISTING_VERSION:-installed}"
     printf "Reinstall? [y/N]: "
-    read -r response
+    if [ -t 0 ]; then
+        read -r response
+    elif [ -e /dev/tty ]; then
+        read -r response < /dev/tty
+    else
+        response="N"
+    fi
     case "$response" in
         [yY][eE][sS]|[yY])
             echo "${INFO} Proceeding with reinstallation..."
@@ -102,7 +108,13 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "  [1] español (default)"
     echo "  [2] english"
     printf "Choose [1/2]: "
-    read -r lang_choice
+    if [ -t 0 ]; then
+        read -r lang_choice
+    elif [ -e /dev/tty ]; then
+        read -r lang_choice < /dev/tty
+    else
+        lang_choice="1"
+    fi
     case "$lang_choice" in
         2)
             LANGUAGE="en"

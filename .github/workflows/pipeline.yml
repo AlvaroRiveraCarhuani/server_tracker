@@ -3,7 +3,6 @@ name: CI Pipeline
 on:
   push:
     branches: [ "master", "main" ]
-    tags: [ "v*" ]
   pull_request:
     branches: [ "master", "main" ]
 
@@ -77,33 +76,3 @@ jobs:
         run: |
           python -m compileall server
           pytest -v
-
-  release-agent-binaries:
-    name: Release Go Agent Binaries
-    needs: [test-go-agent, test-python-backend]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "stable"
-
-      - name: Build Linux amd64
-        run: |
-          cd agent
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o ../dist/solv-agent-linux-amd64 ./cmd/solv-agent
-
-      - name: Build Linux arm64
-        run: |
-          cd agent
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o ../dist/solv-agent-linux-arm64 ./cmd/solv-agent
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: solv-agent-binaries
-          path: dist/
